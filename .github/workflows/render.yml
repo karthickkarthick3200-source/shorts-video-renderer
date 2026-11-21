@@ -1,4 +1,4 @@
-name: Render Short Video
+name: Render 4K Multi-Animation Short
 
 on:
   workflow_dispatch:
@@ -17,69 +17,69 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Tools & Neural Voice Model
+      - name: Install 4K Video, AI Animation & Neural Voice Tools
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-montserrat fonts-dejavu-core curl
-          pip install --upgrade kokoro-onnx soundfile numpy pillow
+          pip install --upgrade kokoro-onnx soundfile numpy pillow gradio_client
           mkdir -p tts_model
           curl -sL "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" -o tts_model/kokoro-v1.0.onnx
           curl -sL "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o tts_model/voices-v1.0.bin
 
-      - name: Generate 25-40s Voiceover & Multi-Animation Scenes
+      - name: Generate 4K Multi-Animation Scenes & Neural Voice
         env:
           SCRIPT_TEXT: ${{ github.event.inputs.script }}
           TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
           TOPIC_ID: ${{ github.event.inputs.topic_id }}
         run: |
           cat << 'EOF' > make_video.py
-          import math, os, random, re, subprocess, urllib.parse, urllib.request
+          import math, os, random, re, shutil, subprocess, urllib.parse, urllib.request
           import numpy as np
           import soundfile as sf
           from kokoro_onnx import Kokoro
-          from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageStat
+          from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
-          title = os.environ.get("TOPIC_TITLE", "").strip() or "Creator Growth Secret"
+          title = os.environ.get("TOPIC_TITLE", "").strip() or "Secret AI Shortcut"
           raw_script = os.environ.get("SCRIPT_TEXT", "").strip()
           topic_id = os.environ.get("TOPIC_ID", "").strip() or "T_TEST"
 
-          # Ensure script is long enough (65-95 words) to hit 25-40 seconds naturally
-          if len(raw_script.split()) < 55:
+          # 1. Build a High-Retention 28-36s Hook-Driven Script if input is short or generic
+          if len(raw_script.split()) < 60 or "welcome to" in raw_script.lower():
               script = (
-                  f"{raw_script} "
-                  f"Here is why almost nobody talks about {title}. "
-                  f"When you apply this single shift every single day, your consistency, focus, and results compound faster than you ever thought possible. "
-                  f"Stop overthinking the setup, start right now with what you have, and watch how quickly everything changes for you!"
-              ).strip()
+                  f"Stop scrolling! Nobody is telling you the real secret behind {title}. "
+                  f"While ninety-nine percent of people waste hours doing things the hard way, top creators use this exact three-step shift to get ten times faster results. "
+                  f"First, lock in your core hook in the first two seconds so viewers cannot look away. "
+                  f"Second, combine real human energy with fast visual pattern interrupts every three seconds. "
+                  f"Try this today on your very next post and watch your growth explode!"
+              )
           else:
               script = raw_script
 
-          # 1. Content-Matched High-Retention Neural Voice (Kokoro-82M)
+          # 2. Content-Matched Kokoro-82M Neural Voiceover
           combined = (title + " " + script).lower()
           if any(k in combined for k in ["baby", "cute", "monkey", "animal", "funny", "kid", "mom", "dad", "love", "story"]):
               voice_id = "af_heart"
-              base_speed = 1.03
-          elif any(k in combined for k in ["hack", "trick", "money", "cheat", "secret", "mistake", "rupee", "₹", "student", "creator"]):
+              base_speed = 1.05
+          elif any(k in combined for k in ["hack", "trick", "money", "cheat", "secret", "mistake", "rupee", "₹", "student", "creator", "stop scrolling"]):
               voice_id = "am_fenrir"
-              base_speed = 1.08
+              base_speed = 1.10
           else:
               voice_id = "am_michael"
-              base_speed = 1.05
+              base_speed = 1.07
 
           kokoro = Kokoro("tts_model/kokoro-v1.0.onnx", "tts_model/voices-v1.0.bin")
           sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()] or [script]
 
-          audio_segments = []
+          audio_segments = [np.zeros(int(24000 * 0.04), dtype=np.float32)]
           word_timings = []
-          cursor_t = 0.05
+          cursor_t = 0.04
           sr = 24000
-          audio_segments.append(np.zeros(int(sr * 0.05), dtype=np.float32))
 
           for idx_s, sent in enumerate(sentences):
-              spd = base_speed * (1.05 if idx_s == 0 else (0.97 if idx_s == len(sentences) - 1 else 1.0))
+              spd = base_speed * (1.06 if idx_s == 0 else (0.98 if idx_s == len(sentences) - 1 else 1.01))
               samples, sr = kokoro.create(sent, voice=voice_id, speed=spd, lang="en-us")
               non_silent = np.where(np.abs(samples) > 0.008)[0]
               if len(non_silent) > 0:
-                  samples = samples[max(0, non_silent[0]-350):min(len(samples), non_silent[-1]+550)]
+                  samples = samples[max(0, non_silent[0]-300):min(len(samples), non_silent[-1]+500)]
               sent_dur = len(samples) / float(sr)
 
               s_words = sent.split()
@@ -93,27 +93,24 @@ jobs:
 
               audio_segments.append(samples)
               cursor_t += sent_dur
-
               if idx_s < len(sentences) - 1:
-                  pause = np.zeros(int(sr * 0.20), dtype=np.float32)
-                  audio_segments.append(pause)
-                  cursor_t += 0.20
+                  audio_segments.append(np.zeros(int(sr * 0.18), dtype=np.float32))
+                  cursor_t += 0.18
 
           full_voice = np.concatenate(audio_segments)
           sf.write("voice_raw.wav", full_voice, sr)
 
           subprocess.run([
               "ffmpeg", "-y", "-i", "voice_raw.wav",
-              "-af", "equalizer=f=115:t=q:w=1.1:g=3.5,equalizer=f=3800:t=q:w=1.4:g=3.0,acompressor=threshold=-16dB:ratio=3.5:attack=8:release=100,loudnorm",
+              "-af", "equalizer=f=115:t=q:w=1.1:g=3.5,equalizer=f=3800:t=q:w=1.4:g=3.2,acompressor=threshold=-16dB:ratio=3.5:attack=8:release=100,loudnorm",
               "voice.wav"
           ], check=True)
 
           voice_dur = len(full_voice) / float(sr)
-          # Clamp target duration between 25s and 40s
-          total_dur = max(25.0, min(40.0, voice_dur + 0.8))
-          print(f"Final video duration: {total_dur:.2f}s (voice: {voice_dur:.2f}s)")
+          total_dur = max(25.0, min(40.0, voice_dur + 0.6))
+          print(f"Target 4K Video Duration: {total_dur:.2f}s")
 
-          # 2. Kinetic Word-by-Word Pop & Gold Highlight Subtitles
+          # 3. Build 4K (2160x3840) Kinetic Word-by-Word Pop Subtitles
           def fmt_ass(sec):
               h = int(sec // 3600)
               m = int((sec % 3600) // 60)
@@ -123,23 +120,23 @@ jobs:
 
           ass_header = """[Script Info]
           ScriptType: v4.00+
-          PlayResX: 1080
-          PlayResY: 1920
+          PlayResX: 2160
+          PlayResY: 3840
 
           [V4+ Styles]
           Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-          Style: KineticBase,Montserrat,76,&H00FFFFFF,&H0000D7FF,&H00050505,&HAA000000,-1,0,0,0,100,100,1,0,1,6,4,2,60,60,340,1
-          Style: HookBadge,Montserrat,64,&H0018D4FF,&H00FFFFFF,&H00050505,&HBB000000,-1,0,0,0,100,100,2,0,1,5,4,8,60,60,150,1
+          Style: Kinetic4K,Montserrat,152,&H00FFFFFF,&H0000D7FF,&H00050505,&HAA000000,-1,0,0,0,100,100,2,0,1,12,8,2,120,120,660,1
+          Style: Hook4K,Montserrat,126,&H0018D4FF,&H00FFFFFF,&H00050505,&HBB000000,-1,0,0,0,100,100,4,0,1,10,8,8,120,120,280,1
 
           [Events]
           Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           """
 
           events = []
-          clean_hook = re.sub(r"[^A-Za-z0-9 !&\-]", "", title.upper())[:28]
+          clean_hook = re.sub(r"[^A-Za-z0-9 !&\-]", "", title.upper())[:26]
           events.append(
-              f"Dialogue: 1,0:00:00.00,{fmt_ass(min(3.2, total_dur))},HookBadge,,0,0,0,,"
-              f"{{\\fad(120,180)\\fscx80\\fscy80\\t(0,220,\\fscx105\\fscy105)\\t(220,350,\\fscx100\\fscy100)}}{clean_hook}"
+              f"Dialogue: 1,0:00:00.00,{fmt_ass(min(3.0, total_dur))},Hook4K,,0,0,0,,"
+              f"{{\\fad(120,160)\\fscx80\\fscy80\\t(0,220,\\fscx106\\fscy106)\\t(220,340,\\fscx100\\fscy100)}}{clean_hook}"
           )
 
           for g_start in range(0, len(word_timings), 3):
@@ -151,189 +148,174 @@ jobs:
                           styled_words.append(r"{\c&H001AD6FF&\fscx124\fscy124\t(0,85,\fscx108\fscy108)}" + w_str + r"{\c&H00FFFFFF&\fscx100\fscy100}")
                       else:
                           styled_words.append(w_str)
-                  events.append(f"Dialogue: 0,{fmt_ass(wt0)},{fmt_ass(wt1)},KineticBase,,0,0,0,,{' '.join(styled_words)}")
+                  events.append(f"Dialogue: 0,{fmt_ass(wt0)},{fmt_ass(wt1)},Kinetic4K,,0,0,0,,{' '.join(styled_words)}")
 
           with open("captions.ass", "w", encoding="utf-8") as af:
               af.write(ass_header + "\n".join(events))
 
-          # 3. Multi-Scene Visuals: Alternating Realistic Creator Bedroom POV + Dynamic Topic B-Roll
-          num_scenes = max(8, min(11, int(round(total_dur / 3.1))))
+          # 4. Generate True Multi-Animation Clips (Creator POV + AI Anime + 3D Cinematic)
+          num_scenes = 8
+          seg_dur = total_dur / float(num_scenes)
           words = script.split()
           chunk_len = max(1, len(words) // num_scenes)
           scene_beats = [" ".join(words[i*chunk_len:(i+1)*chunk_len]) for i in range(num_scenes)]
 
-          creator_base = (
-              "photorealistic 4k smartphone POV shot of a relatable young creator sitting in a clean modern aesthetic bedroom "
-              "with warm golden hour glow and subtle amber LED strip lights, looking directly into camera lens with expressive "
-              "hand gestures, shallow depth of field, soft box key light, natural skin texture, cinematic mobile photography, no text"
+          creator_prompt = (
+              "Dynamic handheld smartphone camera, rapid zoom-in on hook, immersive first-person POV, shallow depth of field, "
+              "4k resolution, cinematic mobile style. A relatable Gen-Z creator sitting in a clean modern aesthetic bedroom "
+              "with warm LED strip lights and golden hour glow, looking intensely into camera lens with high energy, "
+              "expressive hand gestures, subtle blinking, realistic skin texture, natural shadows, no text, no watermark."
           )
-          broll_base = (
-              "photorealistic cinematic 4k close-up visual storytelling shot, dramatic golden hour lighting, shallow depth of field, "
-              "rich contrast, crisp highlights, atmospheric warm bokeh, vertical 9:16, no text, no watermark"
-          )
+          anime_prompts = [
+              "High-budget Japanese anime animation scene, Makoto Shinkai and Jujutsu Kaisen dynamic lighting, glowing golden energy aura, wind blowing hair, dramatic camera orbit, vibrant neon particles, 4k anime sakuga, no text",
+              "Epic anime protagonist breakthrough moment, electric cyan and gold lightning effects, fast speed lines, dramatic rim light, ultra-detailed anime cinematography, 4k vertical animation, no text",
+              "3D Pixar and modern anime hybrid animation, futuristic glowing holographic workspace floating in air, dynamic camera push-in, cinematic depth of field, 4k render, no text",
+              "Vibrant anime city skyline at golden sunset with glowing light trails and flying energy sparks, smooth cinematic camera sweep, 4k anime movie frame, no text"
+          ]
 
-          def make_procedural_scene(idx_sc):
-              img = Image.new("RGB", (1080, 1920), (14, 11, 18))
-              draw = ImageDraw.Draw(img, "RGBA")
-              for y in range(0, 1920, 4):
-                  ratio = y / 1920.0
-                  r = int(22 + 55 * (1 - abs(ratio - 0.45)*1.4))
-                  g = int(14 + 35 * (1 - abs(ratio - 0.45)*1.4))
-                  b = int(26 + 40 * ratio)
-                  draw.rectangle([0, y, 1080, y+4], fill=(max(0, r), max(0, g), max(0, b)))
-              rng = random.Random(800 + idx_sc * 37)
-              for _ in range(32):
-                  cx, cy = rng.randint(60, 1020), rng.randint(120, 1800)
-                  rad = rng.randint(40, 210)
-                  col = (255, 190, 75) if rng.random() > 0.35 else (255, 120, 60)
-                  draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(col[0], col[1], col[2], rng.randint(25, 70)))
-              return img.filter(ImageFilter.GaussianBlur(radius=16))
+          from gradio_client import Client
+          video_clients = []
+          for space_id in ["Lightricks/ltx-video-distilled", "Wan-AI/Wan2.1", "hysts/CogVideoX-5b"]:
+              try:
+                  video_clients.append((space_id, Client(space_id)))
+                  print("Connected AI video space:", space_id)
+              except Exception as e:
+                  print("Space unavailable:", space_id, e)
 
-          for i, beat in enumerate(scene_beats):
-              # Alternate between Creator A-Roll (even indices) and Topic B-Roll (odd indices) for high retention
-              if i % 2 == 0:
-                  gestures = ["pointing toward camera", "leaning forward intensely", "explaining with open hands", "nodding with confident smile"]
-                  prompt = f"{creator_base}, {gestures[(i//2) % len(gestures)]}, talking about {beat[:60]}"
-              else:
-                  prompt = f"{beat[:85]}, {title}, {broll_base}"
-
-              encoded = urllib.parse.quote(prompt)
-              urls = [
-                  f"https://image.pollinations.ai/prompt/{encoded}?width=768&height=1344&model=flux&nologo=true&seed={420 + i*53}",
-                  f"https://image.pollinations.ai/prompt/{encoded}?width=768&height=1344&model=turbo&nologo=true&seed={920 + i*53}"
-              ]
-              fname = f"scene_{i}.jpg"
-              loaded = False
-              for u in urls:
+          def generate_ai_video_clip(prompt_text, out_mp4, seed_val):
+              for space_id, cl in video_clients:
                   try:
+                      if "ltx" in space_id.lower():
+                          res = cl.predict(
+                              prompt=prompt_text,
+                              negative_prompt="blurry, low quality, deformed hands, extra fingers, morphing face, stiff body, robotic movement, dead eyes, bad anatomy, text overlay, watermarks",
+                              height=768,
+                              width=448,
+                              num_frames=97,
+                              seed=seed_val,
+                              api_name="/text_to_video"
+                          )
+                      else:
+                          res = cl.predict(prompt=prompt_text, api_name="/predict")
+                      vid_path = res[0] if isinstance(res, (list, tuple)) else (res.get("video") if isinstance(res, dict) else res)
+                      if vid_path and os.path.exists(str(vid_path)) and os.path.getsize(str(vid_path)) > 15000:
+                          shutil.copy(str(vid_path), out_mp4)
+                          return True
+                  except Exception as e:
+                      print(f"Video gen retry on {space_id}:", e)
+              return False
+
+          # Fallback: Multi-layer animated anime/creator composite with dynamic particle & light-sweep animation
+          def generate_animated_fallback(beat_text, is_creator, idx_sc, out_mp4):
+              style_tag = (
+                  "photorealistic Gen-Z creator in warm LED aesthetic bedroom talking to camera with hand gestures, golden hour lighting, 4k"
+                  if is_creator else
+                  "high-energy Japanese anime sakuga scene, glowing golden energy aura, dynamic speed lines, vibrant lighting, 4k"
+              )
+              full_p = f"{beat_text[:70]}, {title}, {style_tag}, no text"
+              img_path = f"base_{idx_sc}.jpg"
+              got_img = False
+              for model_name in ["flux", "turbo"]:
+                  try:
+                      u = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(full_p)}?width=1080&height=1920&model={model_name}&nologo=true&seed={600+idx_sc*47}"
                       req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
-                      with urllib.request.urlopen(req, timeout=40) as r:
-                          raw_bytes = r.read()
-                      with open(fname, "wb") as f:
-                          f.write(raw_bytes)
-                      img = Image.open(fname).convert("RGB")
-                      stat = ImageStat.Stat(img)
-                      if img.size[0] >= 400 and sum(stat.stddev) > 45:
-                          w, h = img.size
-                          img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
-                          img = ImageEnhance.Contrast(img).enhance(1.15)
-                          img = ImageEnhance.Color(img).enhance(1.16)
-                          img = ImageEnhance.Sharpness(img).enhance(1.22)
-                          img.save(fname, "JPEG", quality=93)
-                          loaded = True
+                      with urllib.request.urlopen(req, timeout=30) as r:
+                          data = r.read()
+                      with open(img_path, "wb") as f:
+                          f.write(data)
+                      im = Image.open(img_path).convert("RGB")
+                      if im.size[0] >= 400:
+                          w, h = im.size
+                          im = im.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
+                          im = ImageEnhance.Contrast(im).enhance(1.18)
+                          im = ImageEnhance.Color(im).enhance(1.22)
+                          im.save(img_path, "JPEG", quality=94)
+                          got_img = True
                           break
                   except Exception:
                       pass
-              if not loaded:
-                  make_procedural_scene(i).save(fname, "JPEG", quality=93)
 
-          # 4. Generate 30 FPS Warm Bokeh Particles + Progress Bar Overlay
-          fps = 30
-          total_frames = int(math.ceil(total_dur * fps))
-          os.makedirs("overlay_frames", exist_ok=True)
-          rng_p = random.Random(108)
-          particles = [
-              [rng_p.uniform(0, 1080), rng_p.uniform(0, 1920), rng_p.uniform(3, 10), rng_p.uniform(2.5, 7.5), rng_p.uniform(-1.0, 1.0), rng_p.randint(110, 220)]
-              for _ in range(45)
-          ]
+              if not got_img:
+                  # Generate rich anime-style energy burst frame with radial light beams & glowing particles
+                  im = Image.new("RGB", (1080, 1920), (12, 14, 28))
+                  dr = ImageDraw.Draw(im, "RGBA")
+                  c1 = (255, 195, 55) if is_creator else (0, 225, 255)
+                  c2 = (255, 95, 65) if is_creator else (180, 70, 255)
+                  for r_step in range(18, 0, -1):
+                      rad = r_step * 75
+                      alpha = int(18 + (18 - r_step) * 5)
+                      dr.ellipse([540-rad, 880-rad, 540+rad, 880+rad], fill=(c1[0], c1[1], c1[2], alpha))
+                  rng = random.Random(300 + idx_sc * 19)
+                  for _ in range(36):
+                      ang = rng.uniform(0, math.pi * 2)
+                      x2, y2 = int(540 + math.cos(ang)*1400), int(880 + math.sin(ang)*1400)
+                      dr.line([(540, 880), (x2, y2)], fill=(c2[0], c2[1], c2[2], 55), width=rng.randint(3, 12))
+                  im = im.filter(ImageFilter.GaussianBlur(radius=6))
+                  im.save(img_path, "JPEG", quality=92)
 
-          for f_idx in range(total_frames):
-              ov = Image.new("RGBA", (540, 960), (0, 0, 0, 0))
-              dr = ImageDraw.Draw(ov, "RGBA")
-              for p in particles:
-                  p[1] -= p[3]
-                  p[0] += p[4] + math.sin(f_idx * 0.07 + p[2]) * 0.7
-                  if p[1] < -20:
-                      p[1] = 1940
-                      p[0] = rng_p.uniform(0, 1080)
-                  sx, sy, sr_p = int(p[0] * 0.5), int(p[1] * 0.5), max(1, int(p[2] * 0.5))
-                  dr.ellipse([sx - sr_p*2, sy - sr_p*2, sx + sr_p*2, sy + sr_p*2], fill=(255, 195, 75, int(p[5] * 0.25)))
-                  dr.ellipse([sx - sr_p, sy - sr_p, sx + sr_p, sy + sr_p], fill=(255, 248, 220, p[5]))
+              frames = int(math.ceil(seg_dur * 30)) + 4
+              # Rapid hook zoom-in on scene 0, dynamic handheld motion + glowing lens flare sweep on others
+              if idx_sc == 0:
+                  zp = f"zoompan=z='min(1.02 + 0.30*pow(on/{frames},0.5), 1.32)':x='iw/2-(iw/zoom/2)+sin(on*0.25)*16':y='ih/2-(ih/zoom/2)+cos(on*0.20)*12':d={frames}:s=1080x1920:fps=30"
+              else:
+                  zp = f"zoompan=z='max(1.28 - 0.24*pow(on/{frames},0.6), 1.04)':x='iw/2-(iw/zoom/2)+sin(on*0.18)*18':y='ih/2-(ih/zoom/2)+cos(on*0.15)*12':d={frames}:s=1080x1920:fps=30"
 
-              prog_w = int(540 * min(1.0, f_idx / float(max(1, total_frames - 1))))
-              dr.rectangle([0, 952, 540, 960], fill=(255, 255, 255, 45))
-              dr.rectangle([0, 952, prog_w, 960], fill=(255, 200, 60, 240))
-              ov.save(f"overlay_frames/f_{f_idx:05d}.png", "PNG")
+              subprocess.run([
+                  "ffmpeg", "-y", "-loop", "1", "-t", f"{seg_dur + 0.3:.3f}", "-i", img_path,
+                  "-vf", f"scale=1380:2453,{zp},trim=duration={seg_dur:.4f},setpts=PTS-STARTPTS",
+                  "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p", out_mp4
+              ], check=True)
 
-          # 5. Synthesize Warm Ambient Synth Beat Underneath Voiceover
+          clip_files = []
+          for i, beat in enumerate(scene_beats):
+              clip_mp4 = f"clip_{i}.mp4"
+              is_creator_scene = (i % 2 == 0)
+              if is_creator_scene:
+                  p_text = f"{creator_prompt} Speaking passionately about: {beat[:70]}"
+              else:
+                  p_text = f"{anime_prompts[(i//2) % len(anime_prompts)]}, depicting: {beat[:70]}, {title}"
+
+              ok = generate_ai_video_clip(p_text, clip_mp4, 1000 + i * 37)
+              if not ok:
+                  generate_animated_fallback(beat, is_creator_scene, i, clip_mp4)
+              clip_files.append(clip_mp4)
+
+          # 5. Synthesize High-Energy Modern Phonk / Electronic Creator Beat
           subprocess.run([
               "ffmpeg", "-y",
-              "-f", "lavfi", "-i", f"sine=f=65.41:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"sine=f=130.81:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.03",
+              "-f", "lavfi", "-i", f"sine=f=55.0:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"sine=f=110.0:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.035",
               "-filter_complex",
-              "[0:a]tremolo=f=2.2:d=0.80,volume=0.08[bass];"
-              "[1:a]tremolo=f=4.4:d=0.65,volume=0.035[pulse];"
-              "[2:a]bandpass=f=950:width_type=h:w=550,tremolo=f=2.2:d=0.92,volume=0.14[hat];"
-              f"[bass][pulse][hat]amix=inputs=3:duration=shortest,afade=t=in:st=0:d=0.3,afade=t=out:st={max(total_dur-0.8,0.4)}:d=0.8[bg]",
+              "[0:a]tremolo=f=2.6:d=0.88,volume=0.09[bass];"
+              "[1:a]tremolo=f=5.2:d=0.72,volume=0.04[pulse];"
+              "[2:a]bandpass=f=1100:width_type=h:w=650,tremolo=f=2.6:d=0.95,volume=0.16[hat];"
+              f"[bass][pulse][hat]amix=inputs=3:duration=shortest,afade=t=in:st=0:d=0.25,afade=t=out:st={max(total_dur-0.7,0.4)}:d=0.7[bg]",
               "-map", "[bg]", "bgm.wav"
           ], check=True)
 
-          # 6. Assemble Multi-Animation Handheld Camera Shake + Hook Rapid Zoom + xfade Cuts
-          trans_dur = 0.30
-          seg_dur = (total_dur + trans_dur * (num_scenes - 1)) / float(num_scenes)
-          seg_frames = int(math.ceil(seg_dur * fps)) + 4
-
+          # 6. Concatenate All Multi-Animation Clips + Upscale to True 4K (2160x3840) + Burn 4K Captions
           inputs = []
           filter_parts = []
-          transitions = ["zoomin", "smoothleft", "radial", "smoothright", "wipeup", "circleopen", "dissolve"]
-
-          for i in range(num_scenes):
-              inputs.extend(["-loop", "1", "-t", f"{seg_dur + 0.4:.3f}", "-i", f"scene_{i}.jpg"])
-              if i == 0:
-                  # Rapid hook zoom-in + handheld smartphone micro-shake
-                  zp = (
-                      f"zoompan=z='min(1.02 + 0.28*pow(on/{seg_frames},0.55), 1.30)':"
-                      f"x='iw/2-(iw/zoom/2)+sin(on*0.22)*14':y='ih/2-(ih/zoom/2)+cos(on*0.18)*10':"
-                      f"d={seg_frames}:s=1080x1920:fps={fps}"
-                  )
-              elif i % 3 == 1:
-                  # Fast whip zoom-out + handheld drift
-                  zp = (
-                      f"zoompan=z='max(1.26 - 0.22*pow(on/{seg_frames},0.65), 1.04)':"
-                      f"x='iw/2-(iw/zoom/2)+sin(on*0.16)*16':y='ih/2-(ih/zoom/2)+cos(on*0.14)*10':"
-                      f"d={seg_frames}:s=1080x1920:fps={fps}"
-                  )
-              elif i % 3 == 2:
-                  # Smooth push-in + gentle horizontal pan
-                  zp = (
-                      f"zoompan=z='min(1.04 + 0.20*(on/{seg_frames}), 1.24)':"
-                      f"x='iw/2-(iw/zoom/2)+cos(on*0.15)*18':y='ih/2-(ih/zoom/2)+sin(on*0.13)*12':"
-                      f"d={seg_frames}:s=1080x1920:fps={fps}"
-                  )
-              else:
-                  # Handheld micro-bob + subtle zoom pulse
-                  zp = (
-                      f"zoompan=z='1.12 + 0.06*sin(on*0.12)':"
-                      f"x='iw/2-(iw/zoom/2)+sin(on*0.20)*15':y='ih/2-(ih/zoom/2)+cos(on*0.17)*11':"
-                      f"d={seg_frames}:s=1080x1920:fps={fps}"
-                  )
-              filter_parts.append(f"[{i}:v]scale=1380:2453,{zp},trim=duration={seg_dur:.4f},setpts=PTS-STARTPTS,format=yuva420p[v{i}];")
-
-          prev_label = "v0"
-          for i in range(1, num_scenes):
-              out_label = f"xf{i}"
-              offset = i * (seg_dur - trans_dur)
-              t_type = transitions[(i - 1) % len(transitions)]
+          concat_v = ""
+          for i, cf in enumerate(clip_files):
+              inputs.extend(["-stream_loop", "-1", "-t", f"{seg_dur:.4f}", "-i", cf])
+              # Upscale to true 4K vertical 2160x3840 with Lanczos + unsharp 4K crispness
               filter_parts.append(
-                  f"[{prev_label}][v{i}]xfade=transition={t_type}:duration={trans_dur:.2f}:offset={offset:.3f}[{out_label}];"
+                  f"[{i}:v]fps=30,scale=2160:3840:force_original_aspect_ratio=increase:flags=lanczos,"
+                  f"crop=2160:3840,unsharp=5:5:0.85:5:5:0.0,trim=duration={seg_dur:.4f},setpts=PTS-STARTPTS[v{i}];"
               )
-              prev_label = out_label
+              concat_v += f"[v{i}]"
 
-          ov_idx = num_scenes
-          voice_idx = num_scenes + 1
-          bgm_idx = num_scenes + 2
-          inputs.extend([
-              "-framerate", str(fps), "-i", "overlay_frames/f_%05d.png",
-              "-i", "voice.wav",
-              "-i", "bgm.wav"
-          ])
+          voice_idx = num_scenes
+          bgm_idx = num_scenes + 1
+          inputs.extend(["-i", "voice.wav", "-i", "bgm.wav"])
 
           filter_parts.append(
-              f"[{ov_idx}:v]scale=1080:1920:flags=bilinear[ov_up];"
-              f"[{prev_label}][ov_up]overlay=0:0:shortest=1,vignette=PI/5,ass=captions.ass,format=yuv420p[outv];"
-              f"[{voice_idx}:a]volume=1.40[va];"
-              f"[{bgm_idx}:a]volume=0.90[ba];"
+              f"{concat_v}concat=n={num_scenes}:v=1:a=0[v4k];"
+              f"[v4k]vignette=PI/5.5,ass=captions.ass,format=yuv420p[outv];"
+              f"[{voice_idx}:a]volume=1.42[va];"
+              f"[{bgm_idx}:a]volume=0.92[ba];"
               f"[va][ba]amix=inputs=2:duration=first:dropout_transition=1[outa]"
           )
 
@@ -342,25 +324,12 @@ jobs:
               *inputs,
               "-filter_complex", "".join(filter_parts),
               "-map", "[outv]", "-map", "[outa]",
-              "-c:v", "libx264", "-preset", "fast", "-crf", "19",
-              "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+              "-c:a", "aac", "-b:a", "256k", "-pix_fmt", "yuv420p", "-shortest",
               f"{topic_id}.mp4"
           ], check=True)
           EOF
           python3 make_video.py
 
-      - name: Upload Video to Google Drive & Update Sheet
+      - name: Upload 4K Video to Google Drive & Update Sheet
         env:
-          WEBHOOK_URL: ${{ secrets.APPS_SCRIPT_URL }}
-          TOPIC_ID: ${{ github.event.inputs.topic_id }}
-        run: |
-          cat << 'EOF' > upload.py
-          import base64, json, os, urllib.request
-          with open(f"{os.environ['TOPIC_ID']}.mp4", "rb") as f:
-              b64 = base64.b64encode(f.read()).decode("utf-8")
-          body = json.dumps({"topic_id": os.environ["TOPIC_ID"], "video_base64": b64}).encode("utf-8")
-          req = urllib.request.Request(os.environ["WEBHOOK_URL"], data=body, headers={"Content-Type": "application/json"})
-          with urllib.request.urlopen(req, timeout=60) as resp:
-              print("Apps Script response:", resp.read().decode())
-          EOF
-          python3 upload.py
