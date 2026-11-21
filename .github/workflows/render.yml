@@ -20,7 +20,7 @@ jobs:
       - name: Install Tools
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
-          pip install edge-tts pillow
+          pip install --upgrade edge-tts gTTS pillow
 
       - name: Generate Voiceover, Subtitles & 3 Scenes
         env:
@@ -31,16 +31,21 @@ jobs:
           cat << 'EOF' > make_video.py
           import asyncio, os, re, subprocess, urllib.parse, urllib.request
           import edge_tts
+          from gtts import gTTS
           from PIL import Image, ImageDraw
 
-          script = os.environ["SCRIPT_TEXT"].strip()
-          title = os.environ["TOPIC_TITLE"].strip()
-          topic_id = os.environ["TOPIC_ID"].strip()
+          title = os.environ.get("TOPIC_TITLE", "").strip() or "Daily Quick Tip"
+          raw_script = os.environ.get("SCRIPT_TEXT", "").strip()
+          script = raw_script if len(raw_script) > 3 else f"{title}. Here is something amazing you need to know today!"
+          topic_id = os.environ.get("TOPIC_ID", "").strip() or "T_TEST"
 
-          # 1. Generate voiceover MP3 + collect word timings
+          # 1. Generate voiceover MP3 (tries multiple Edge voices, then falls back to gTTS)
           word_events = []
-          async def make_audio():
-              comm = edge_tts.Communicate(script, "en-US-AndrewMultilingualNeural", boundary="WordBoundary")
+          audio_ok = False
+
+          async def try_edge(voice_name):
+              word_events.clear()
+              comm = edge_tts.Communicate(script, voice_name, boundary="WordBoundary")
               with open("voice.mp3", "wb") as af:
                   async for chunk in comm.stream():
                       if chunk["type"] == "audio":
@@ -50,7 +55,20 @@ jobs:
                           dur_s = chunk["duration"] / 10_000_000.0
                           word_events.append((start_s, start_s + dur_s, chunk["text"]))
 
-          asyncio.run(make_audio())
+          for v in ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-JennyNeural"]:
+              try:
+                  asyncio.run(try_edge(v))
+                  if os.path.exists("voice.mp3") and os.path.getsize("voice.mp3") > 1000:
+                      audio_ok = True
+                      print("Audio generated with Edge voice:", v)
+                      break
+              except Exception as e:
+                  print(f"Edge voice {v} skipped:", e)
+
+          if not audio_ok:
+              print("Falling back to gTTS...")
+              tts = gTTS(text=script, lang="en", slow=False)
+              tts.save("voice.mp3")
 
           cmd_dur = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"]
           total_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 3.0)
@@ -62,7 +80,6 @@ jobs:
               ms = int((sec - int(sec)) * 1000)
               return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-          # Build clean 3-word subtitle blocks (with automatic even-timing fallback)
           srt_blocks = []
           if word_events:
               for idx in range(0, len(word_events), 3):
