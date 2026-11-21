@@ -37,20 +37,51 @@ jobs:
           title = os.environ["TOPIC_TITLE"].strip()
           topic_id = os.environ["TOPIC_ID"].strip()
 
+          # 1. Generate voiceover MP3 + collect word timings
+          word_events = []
           async def make_audio():
-              comm = edge_tts.Communicate(script, "en-US-AndrewMultilingualNeural")
-              subs = edge_tts.SubMaker()
+              comm = edge_tts.Communicate(script, "en-US-AndrewMultilingualNeural", boundary="WordBoundary")
               with open("voice.mp3", "wb") as af:
                   async for chunk in comm.stream():
                       if chunk["type"] == "audio":
                           af.write(chunk["data"])
                       elif chunk["type"] == "WordBoundary":
-                          subs.feed(chunk)
-              with open("captions.srt", "w", encoding="utf-8") as sf:
-                  sf.write(subs.get_srt())
+                          start_s = chunk["offset"] / 10_000_000.0
+                          dur_s = chunk["duration"] / 10_000_000.0
+                          word_events.append((start_s, start_s + dur_s, chunk["text"]))
 
           asyncio.run(make_audio())
 
+          cmd_dur = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"]
+          total_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 3.0)
+
+          def fmt_srt(sec):
+              h = int(sec // 3600)
+              m = int((sec % 3600) // 60)
+              s = int(sec % 60)
+              ms = int((sec - int(sec)) * 1000)
+              return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+          # Build clean 3-word subtitle blocks (with automatic even-timing fallback)
+          srt_blocks = []
+          if word_events:
+              for idx in range(0, len(word_events), 3):
+                  grp = word_events[idx:idx+3]
+                  t0 = grp[0][0]
+                  t1 = max(grp[-1][1], t0 + 0.25)
+                  txt = " ".join(w[2] for w in grp)
+                  srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(t0)} --> {fmt_srt(t1)}\n{txt}\n")
+          else:
+              words = script.split()
+              chunks = [" ".join(words[i:i+3]) for i in range(0, len(words), 3)] or [title]
+              step = total_dur / len(chunks)
+              for idx, txt in enumerate(chunks):
+                  srt_blocks.append(f"{idx+1}\n{fmt_srt(idx*step)} --> {fmt_srt((idx+1)*step)}\n{txt}\n")
+
+          with open("captions.srt", "w", encoding="utf-8") as sf:
+              sf.write("\n".join(srt_blocks))
+
+          # 2. Generate 3 dynamic vertical background images
           parts = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
           while len(parts) < 3:
               parts.append(title)
@@ -79,14 +110,13 @@ jobs:
                       draw.line([(0, y), (1080, y)], fill=(20 + i*15, int(25 + y/35), int(55 + y/20)))
                   img.save(fname, "JPEG")
 
-          cmd_dur = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"]
-          total_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 3.0)
+          # 3. Render 3 animated zoom scenes + top title banner + burned-in subtitles
           seg = total_dur / 3.0
           frames = int(seg * 30)
 
           safe_title = re.sub(r"[^A-Za-z0-9 \-]", "", title.upper())[:36]
           font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-          sub_style = "FontName=DejaVu Sans,FontSize=18,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=260"
+          sub_style = "FontName=DejaVu Sans,FontSize=20,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=260"
 
           fc = (
               f"[0:v]scale=1200:2133,zoompan=z='min(zoom+0.0008,1.12)':d={frames}:s=1080x1920:fps=30,trim=duration={seg},setpts=PTS-STARTPTS[v0];"
