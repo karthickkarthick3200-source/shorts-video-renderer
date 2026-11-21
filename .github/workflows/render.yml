@@ -68,30 +68,8 @@ jobs:
         run: |
           ffmpeg -loop 1 -i bg.jpg -i voice.mp3 -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0005,1.15)':d=1:s=1080x1920" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${TOPIC_ID}.mp4"
 
-      - name: Upload MP4 to Google Drive & Update Sheet
-        env:
-          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
-          TOPIC_ID: ${{ github.event.inputs.topic_id }}
-        run: |
-          python3 - << 'EOF'
-          import base64, json, os, subprocess, sys
-
-          topic_id = os.environ["TOPIC_ID"]
-          with open(f"{topic_id}.mp4", "rb") as f:
-              b64 = base64.b64encode(f.read()).decode("utf-8")
-
-          with open("payload.json", "w") as out:
-              json.dump({"topic_id": topic_id, "video_base64": b64}, out)
-
-          raw = subprocess.check_output([
-              "curl", "-sL", "-X", "POST",
-              "-H", "Content-Type: application/json",
-              "-d", "@payload.json",
-              os.environ["APPS_SCRIPT_URL"]
-          ]).decode("utf-8")
-
-          print("Apps Script response:", raw)
-          result = json.loads(raw)
-          if result.get("status") != "ok":
-              sys.exit(f"Sheet update failed: {result}")
-          EOF
+      - name: Save MP4 Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.topic_id }}-video
+          path: ${{ github.event.inputs.topic_id }}.mp4
