@@ -100,4 +100,31 @@ jobs:
 
           subprocess.run([
               "ffmpeg", "-y",
-              "-loop", "1", "-t", str(seg + 1), "-i", "scene_
+              "-loop", "1", "-t", str(seg + 1), "-i", "scene_0.jpg",
+              "-loop", "1", "-t", str(seg + 1), "-i", "scene_1.jpg",
+              "-loop", "1", "-t", str(seg + 1), "-i", "scene_2.jpg",
+              "-i", "voice.mp3",
+              "-filter_complex", fc,
+              "-map", "[outv]", "-map", "3:a",
+              "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+              "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
+              f"{topic_id}.mp4"
+          ], check=True)
+          EOF
+          python3 make_video.py
+
+      - name: Upload Video to Google Drive & Update Sheet
+        env:
+          WEBHOOK_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          TOPIC_ID: ${{ github.event.inputs.topic_id }}
+        run: |
+          cat << 'EOF' > upload.py
+          import base64, json, os, urllib.request
+          with open(f"{os.environ['TOPIC_ID']}.mp4", "rb") as f:
+              b64 = base64.b64encode(f.read()).decode("utf-8")
+          body = json.dumps({"topic_id": os.environ["TOPIC_ID"], "video_base64": b64}).encode("utf-8")
+          req = urllib.request.Request(os.environ["WEBHOOK_URL"], data=body, headers={"Content-Type": "application/json"})
+          with urllib.request.urlopen(req, timeout=60) as resp:
+              print("Apps Script response:", resp.read().decode())
+          EOF
+          python3 upload.py
