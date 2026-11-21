@@ -17,103 +17,116 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Tools
+      - name: Install Tools & Neural Voice Model
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-montserrat fonts-dejavu-core
-          pip install --upgrade edge-tts gTTS pillow
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-montserrat fonts-dejavu-core curl
+          pip install --upgrade kokoro-onnx soundfile numpy pillow
+          mkdir -p tts_model
+          curl -sL "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" -o tts_model/kokoro-v1.0.onnx
+          curl -sL "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o tts_model/voices-v1.0.bin
 
-      - name: Generate Content-Matched Voice, Cinematic Scenes & Transitions
+      - name: Generate Neural Voice, Kinetic Animations & Visuals
         env:
           SCRIPT_TEXT: ${{ github.event.inputs.script }}
           TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
           TOPIC_ID: ${{ github.event.inputs.topic_id }}
         run: |
           cat << 'EOF' > make_video.py
-          import asyncio, math, os, re, subprocess, urllib.parse, urllib.request
-          import edge_tts
-          from gtts import gTTS
-          from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+          import math, os, random, re, subprocess, urllib.parse, urllib.request
+          import numpy as np
+          import soundfile as sf
+          from kokoro_onnx import Kokoro
+          from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageStat
 
           title = os.environ.get("TOPIC_TITLE", "").strip() or "Nano Banana AI"
           raw_script = os.environ.get("SCRIPT_TEXT", "").strip()
-          script = raw_script if len(raw_script) > 3 else f"{title}. Where imagination comes to life."
+          script = raw_script if len(raw_script) > 3 else f"{title}. Where imagination comes to life!"
           topic_id = os.environ.get("TOPIC_ID", "").strip() or "T_TEST"
 
-          # 1. Smart Content-Matched Voice Selection
-          combined_lower = (title + " " + script).lower()
-          if any(k in combined_lower for k in ["baby", "cute", "monkey", "animal", "funny", "kid", "mom", "dad", "love"]):
-              voice_candidates = [("en-US-EmmaMultilingualNeural", "+4%", "+1Hz"), ("en-US-JennyNeural", "+4%", "+1Hz")]
+          # 1. Content-Matched Neural Voice & Dynamic Sentence Delivery (Kokoro-82M)
+          combined = (title + " " + script).lower()
+          if any(k in combined for k in ["baby", "cute", "monkey", "animal", "funny", "kid", "mom", "dad", "love", "story"]):
+              voice_id = "af_heart"
+              base_speed = 1.04
+              theme_palette = [(255, 195, 75), (255, 120, 90)]
               visual_style = (
-                  "3D Pixar Disney animation style, ultra expressive cute character, warm golden sunlight, "
-                  "soft cinematic bokeh, rich textures, 8k octane render, vertical 9:16 movie frame, no text"
+                  "3D Pixar Disney animation movie frame, expressive cute character, warm golden sunlight, "
+                  "cinematic depth of field, vibrant colors, 8k octane render, vertical 9:16, no text"
               )
-          elif any(k in combined_lower for k in ["india", "rupee", "₹", "student", "exam", "hack", "trick"]):
-              voice_candidates = [("en-IN-PrabhatNeural", "+6%", "-1Hz"), ("en-US-AndrewMultilingualNeural", "+6%", "-2Hz")]
+          elif any(k in combined for k in ["hack", "trick", "money", "cheat", "secret", "mistake", "rupee", "₹", "student"]):
+              voice_id = "am_fenrir"
+              base_speed = 1.12
+              theme_palette = [(0, 230, 255), (255, 200, 50)]
               visual_style = (
-                  "3D stylized Pixar cinematic animation, dramatic rim lighting, vibrant neon and gold highlights, "
-                  "shallow depth of field, 8k unreal engine 5 render, vertical 9:16, no text"
+                  "3D stylized Pixar dramatic scene, bold neon cyan and gold rim lighting, "
+                  "high contrast cinematic shot, 8k unreal engine 5 render, vertical 9:16, no text"
               )
           else:
-              # Deep cinematic movie-trailer voice for AI, Tech, Future, Motivation
-              voice_candidates = [("en-US-BrianMultilingualNeural", "+2%", "-4Hz"), ("en-US-DavisNeural", "+2%", "-4Hz"), ("en-US-ChristopherNeural", "+2%", "-3Hz")]
+              voice_id = "am_michael"
+              base_speed = 1.06
+              theme_palette = [(255, 205, 65), (255, 140, 30)]
               visual_style = (
-                  "hyper-detailed 3D futuristic sci-fi cinematic render, glowing golden circuit energy, "
-                  "volumetric god rays, dark obsidian and gold aesthetic, IMAX movie lighting, 8k octane render, vertical 9:16, no text"
+                  "hyper-detailed 3D futuristic sci-fi cinematic render, glowing golden energy waves, "
+                  "volumetric god rays, dark obsidian and gold aesthetic, IMAX lighting, 8k octane render, vertical 9:16, no text"
               )
 
-          word_events = []
-          audio_ok = False
+          print(f"Using neural voice: {voice_id} at speed {base_speed}")
+          kokoro = Kokoro("tts_model/kokoro-v1.0.onnx", "tts_model/voices-v1.0.bin")
 
-          async def try_edge(voice_name, rate_val, pitch_val):
-              word_events.clear()
-              comm = edge_tts.Communicate(script, voice_name, rate=rate_val, pitch=pitch_val, boundary="WordBoundary")
-              with open("voice_raw.mp3", "wb") as af:
-                  async for chunk in comm.stream():
-                      if chunk["type"] == "audio":
-                          af.write(chunk["data"])
-                      elif chunk["type"] == "WordBoundary":
-                          start_s = chunk["offset"] / 10_000_000.0
-                          dur_s = chunk["duration"] / 10_000_000.0
-                          word_events.append((start_s, start_s + dur_s, chunk["text"]))
+          # Split into sentences for natural breathing pauses & dramatic emphasis
+          sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
+          if not sentences:
+              sentences = [script]
 
-          for v_name, v_rate, v_pitch in voice_candidates:
-              try:
-                  asyncio.run(try_edge(v_name, v_rate, v_pitch))
-                  if os.path.exists("voice_raw.mp3") and os.path.getsize("voice_raw.mp3") > 1000:
-                      audio_ok = True
-                      print("Selected matched voice:", v_name)
-                      break
-              except Exception:
-                  pass
+          audio_segments = []
+          word_timings = []
+          cursor_t = 0.05
+          sr = 24000
+          audio_segments.append(np.zeros(int(sr * 0.05), dtype=np.float32))
 
-          if not audio_ok:
-              gTTS(text=script, lang="en", slow=False).save("voice_raw.mp3")
+          for idx_s, sent in enumerate(sentences):
+              # Hook (first sentence) & Payoff (last sentence) get dynamic pacing
+              spd = base_speed * (1.04 if idx_s == 0 else (0.96 if idx_s == len(sentences) - 1 else 1.0))
+              samples, sr = kokoro.create(sent, voice=voice_id, speed=spd, lang="en-us")
+              # Trim dead air inside sentence
+              non_silent = np.where(np.abs(samples) > 0.008)[0]
+              if len(non_silent) > 0:
+                  samples = samples[max(0, non_silent[0]-400):min(len(samples), non_silent[-1]+600)]
+              sent_dur = len(samples) / float(sr)
 
-          # Studio broadcast voice polish (warm bass boost + crisp presence + compression)
+              # Weight word duration by character length for tight lip/caption sync
+              s_words = sent.split()
+              weights = [max(len(re.sub(r'[^A-Za-z0-9]', '', w)), 2) for w in s_words]
+              w_sum = float(sum(weights)) or 1.0
+              w_cursor = cursor_t
+              for w_txt, wt in zip(s_words, weights):
+                  w_dur = sent_dur * (wt / w_sum)
+                  word_timings.append((w_cursor, w_cursor + w_dur, w_txt))
+                  w_cursor += w_dur
+
+              audio_segments.append(samples)
+              cursor_t += sent_dur
+
+              # Dramatic 0.22s pause between sentences
+              if idx_s < len(sentences) - 1:
+                  pause = np.zeros(int(sr * 0.22), dtype=np.float32)
+                  audio_segments.append(pause)
+                  cursor_t += 0.22
+
+          full_voice = np.concatenate(audio_segments)
+          sf.write("voice_raw.wav", full_voice, sr)
+
+          # Broadcast vocal chain: warm low-end + crisp presence + studio compression
           subprocess.run([
-              "ffmpeg", "-y", "-i", "voice_raw.mp3",
-              "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,equalizer=f=120:t=q:w=1:g=3,equalizer=f=4500:t=q:w=1.5:g=2.5,acompressor=threshold=-18dB:ratio=3:attack=10:release=120,loudnorm",
-              "voice.mp3"
+              "ffmpeg", "-y", "-i", "voice_raw.wav",
+              "-af", "equalizer=f=110:t=q:w=1.1:g=3.5,equalizer=f=3800:t=q:w=1.4:g=3.0,acompressor=threshold=-16dB:ratio=3.5:attack=8:release=100,loudnorm",
+              "voice.wav"
           ], check=True)
 
-          cmd_dur = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"]
-          voice_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 4.0)
-          total_dur = voice_dur + 1.2  # Leave 1.2s at the end for golden title outro hold
+          voice_dur = len(full_voice) / float(sr)
+          total_dur = max(voice_dur + 0.9, 4.5)
 
-          # Synthesize warm cinematic trailer chord + deep sub-bass swell
-          subprocess.run([
-              "ffmpeg", "-y",
-              "-f", "lavfi", "-i", f"sine=f=65.41:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"sine=f=130.81:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"sine=f=196.00:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.012",
-              "-filter_complex",
-              "[0:a]volume=0.07[s0];[1:a]volume=0.035[s1];[2:a]volume=0.025[s2];[3:a]lowpass=f=280[n];"
-              f"[s0][s1][s2][n]amix=inputs=4:duration=shortest,afade=t=in:st=0:d=0.6,afade=t=out:st={max(total_dur-1.0,0.5)}:d=1.0[bg]",
-              "-map", "[bg]", "bgm.wav"
-          ], check=True)
-
-          # 2. Clean Cinematic Glow Subtitles (Bottom-third, smooth fade, gold emphasis)
+          # 2. Build Kinetic Word-by-Word Pop & Karaoke Highlight Subtitles
           def fmt_ass(sec):
               h = int(sec // 3600)
               m = int((sec % 3600) // 60)
@@ -128,84 +141,164 @@ jobs:
 
           [V4+ Styles]
           Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-          Style: CinemaSub,Montserrat,62,&H00FFFFFF,&H0000D7FF,&H000A0A0A,&H80000000,-1,0,0,0,100,100,2,0,1,3,4,2,80,80,260,1
-          Style: GoldTitle,Montserrat,96,&H0037AFD4,&H00FFFFFF,&H00080808,&H99000000,-1,0,0,0,100,100,4,0,1,5,6,5,60,60,0,1
+          Style: KineticBase,Montserrat,78,&H00FFFFFF,&H0000D7FF,&H00050505,&HAA000000,-1,0,0,0,100,100,1,0,1,6,4,2,60,60,340,1
+          Style: OutroTitle,Montserrat,92,&H0022C8FF,&H00FFFFFF,&H00050505,&HBB000000,-1,0,0,0,100,100,4,0,1,6,5,5,60,60,0,1
 
           [Events]
           Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           """
 
           events = []
-          if word_events:
-              idx = 0
-              while idx < len(word_events):
-                  grp = word_events[idx:idx+4]
-                  t0 = grp[0][0]
-                  t1 = word_events[idx+4][0] if (idx + 4) < len(word_events) else voice_dur
-                  txt = " ".join(w[2] for w in grp).strip()
-                  events.append(f"Dialogue: 0,{fmt_ass(t0)},{fmt_ass(t1)},CinemaSub,,0,0,0,,{{\\fad(80,80)}}{txt}")
-                  idx += 4
-          else:
-              words = script.split()
-              chunks = [" ".join(words[i:i+4]) for i in range(0, len(words), 4)] or [title]
-              step = voice_dur / len(chunks)
-              for i, txt in enumerate(chunks):
-                  events.append(f"Dialogue: 0,{fmt_ass(i*step)},{fmt_ass((i+1)*step)},CinemaSub,,0,0,0,,{{\\fad(80,80)}}{txt}")
+          # Group into 3-word punchy lines where EACH word highlights & pops as spoken
+          for g_start in range(0, len(word_timings), 3):
+              grp = word_timings[g_start:g_start+3]
+              line_end = grp[-1][1]
+              for active_i, (wt0, wt1, _) in enumerate(grp):
+                  styled_words = []
+                  for j, (_, _, w_str) in enumerate(grp):
+                      if j == active_i:
+                          # Active spoken word pops in gold and scales up
+                          styled_words.append(r"{\c&H0022D4FF&\fscx122\fscy122\t(0,90,\fscx108\fscy108)}" + w_str + r"{\c&H00FFFFFF&\fscx100\fscy100}")
+                      else:
+                          styled_words.append(w_str)
+                  events.append(f"Dialogue: 0,{fmt_ass(wt0)},{fmt_ass(wt1)},KineticBase,,0,0,0,,{' '.join(styled_words)}")
 
-          # Dramatic 3D-style Golden Brand/Topic Title Reveal at the end (like reference outro)
-          clean_outro_title = re.sub(r"[^A-Za-z0-9 !&\-]", "", title.upper())[:28]
+          clean_title = re.sub(r"[^A-Za-z0-9 !&\-]", "", title.upper())[:26]
           events.append(
-              f"Dialogue: 1,{fmt_ass(max(voice_dur - 0.3, 0.5))},{fmt_ass(total_dur)},GoldTitle,,0,0,0,,"
-              f"{{\\fad(250,200)\\fscx90\\fscy90\\t(0,400,\\fscx105\\fscy105)}}{clean_outro_title}"
+              f"Dialogue: 1,{fmt_ass(max(voice_dur - 0.25, 0.5))},{fmt_ass(total_dur)},OutroTitle,,0,0,0,,"
+              f"{{\\fad(180,150)\\fscx75\\fscy75\\t(0,260,\\fscx105\\fscy105)\\t(260,400,\\fscx100\\fscy100)}}{clean_title}"
           )
 
           with open("captions.ass", "w", encoding="utf-8") as af:
               af.write(ass_header + "\n".join(events))
 
-          # 3. Generate High-Detail Flux 3D Scenes
-          num_scenes = max(4, min(7, int(round(total_dur / 2.8))))
+          # 3. Fetch Verified High-Detail Scenes (with multi-endpoint fallback + rich procedural art)
+          num_scenes = max(5, min(8, int(round(total_dur / 2.3))))
           words = script.split()
           chunk_len = max(1, len(words) // num_scenes)
           scene_beats = [" ".join(words[i*chunk_len:(i+1)*chunk_len]) for i in range(num_scenes)]
 
-          for i, beat in enumerate(scene_beats):
-              prompt = f"{beat[:95]}, {title}, {visual_style}"
-              url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=1080&height=1920&model=flux&nologo=true&seed={200 + i*29}"
-              fname = f"scene_{i}.jpg"
-              try:
-                  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                  with urllib.request.urlopen(req, timeout=60) as r:
-                      open(fname, "wb").write(r.read())
-                  img = Image.open(fname).convert("RGB")
-                  w, h = img.size
-                  img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
-                  img = ImageEnhance.Contrast(img).enhance(1.16)
-                  img = ImageEnhance.Color(img).enhance(1.18)
-                  img = ImageEnhance.Sharpness(img).enhance(1.2)
-                  img.save(fname, "JPEG", quality=95)
-              except Exception:
-                  img = Image.new("RGB", (1080, 1920), (15, 12, 8))
-                  draw = ImageDraw.Draw(img)
-                  for y in range(1920):
-                      draw.line([(0, y), (1080, y)], fill=(int(25 + y/40), int(18 + y/55), 10))
-                  img.save(fname, "JPEG")
+          def make_procedural_scene(idx_sc):
+              img = Image.new("RGB", (1080, 1920), (10, 12, 22))
+              draw = ImageDraw.Draw(img, "RGBA")
+              c1, c2 = theme_palette
+              for y in range(0, 1920, 4):
+                  ratio = y / 1920.0
+                  r = int(10 + c1[0] * 0.16 * (1 - abs(ratio - 0.5)*1.5))
+                  g = int(12 + c1[1] * 0.14 * (1 - abs(ratio - 0.5)*1.5))
+                  b = int(24 + c2[2] * 0.18 * ratio)
+                  draw.rectangle([0, y, 1080, y+4], fill=(max(0, r), max(0, g), max(0, b)))
+              rng = random.Random(500 + idx_sc * 31)
+              for _ in range(28):
+                  cx, cy = rng.randint(80, 1000), rng.randint(150, 1770)
+                  rad = rng.randint(35, 190)
+                  col = c1 if rng.random() > 0.4 else c2
+                  draw.ellipse([cx-rad, cy-rad, cx+rad, cy+rad], fill=(col[0], col[1], col[2], rng.randint(25, 75)))
+              img = img.filter(ImageFilter.GaussianBlur(radius=14))
+              draw2 = ImageDraw.Draw(img, "RGBA")
+              for _ in range(45):
+                  px, py = rng.randint(40, 1040), rng.randint(80, 1840)
+                  pr = rng.randint(3, 11)
+                  draw2.ellipse([px-pr, py-pr, px+pr, py+pr], fill=(255, 240, 180, rng.randint(130, 235)))
+              return img
 
-          # 4. Assemble with Smooth xfade Cinematic Transitions + Dynamic Motion + Glow
-          trans_dur = 0.45
+          for i, beat in enumerate(scene_beats):
+              prompt = f"{beat[:85]}, {title}, {visual_style}"
+              encoded = urllib.parse.quote(prompt)
+              urls = [
+                  f"https://image.pollinations.ai/prompt/{encoded}?width=768&height=1344&model=turbo&nologo=true&seed={310 + i*41}",
+                  f"https://image.pollinations.ai/prompt/{encoded}?width=768&height=1344&nologo=true&seed={710 + i*41}"
+              ]
+              fname = f"scene_{i}.jpg"
+              loaded = False
+              for u in urls:
+                  try:
+                      req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+                      with urllib.request.urlopen(req, timeout=35) as r:
+                          raw_bytes = r.read()
+                      with open(fname, "wb") as f:
+                          f.write(raw_bytes)
+                      img = Image.open(fname).convert("RGB")
+                      # Verify it is a real detailed image, not a blank error banner
+                      stat = ImageStat.Stat(img)
+                      if img.size[0] >= 400 and sum(stat.stddev) > 45:
+                          w, h = img.size
+                          img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
+                          img = ImageEnhance.Contrast(img).enhance(1.18)
+                          img = ImageEnhance.Color(img).enhance(1.22)
+                          img = ImageEnhance.Sharpness(img).enhance(1.25)
+                          img.save(fname, "JPEG", quality=93)
+                          loaded = True
+                          print(f"Scene {i} downloaded cleanly")
+                          break
+                  except Exception as e:
+                      print(f"Scene {i} fallback reason:", e)
+              if not loaded:
+                  print(f"Scene {i} using procedural glowing particle art")
+                  make_procedural_scene(i).save(fname, "JPEG", quality=93)
+
+          # 4. Generate Transparent 30 FPS Animated Golden Energy Particle Overlay + Progress Bar
+          fps = 30
+          total_frames = int(math.ceil(total_dur * fps))
+          os.makedirs("overlay_frames", exist_ok=True)
+          rng_p = random.Random(99)
+          particles = [
+              [rng_p.uniform(0, 1080), rng_p.uniform(0, 1920), rng_p.uniform(3, 11), rng_p.uniform(3.5, 9.5), rng_p.uniform(-1.2, 1.2), rng_p.randint(130, 240)]
+              for _ in range(55)
+          ]
+          c_main, c_sec = theme_palette
+
+          for f_idx in range(total_frames):
+              ov = Image.new("RGBA", (540, 960), (0, 0, 0, 0))
+              dr = ImageDraw.Draw(ov, "RGBA")
+              for p in particles:
+                  p[1] -= p[3]
+                  p[0] += p[4] + math.sin(f_idx * 0.08 + p[2]) * 0.8
+                  if p[1] < -20:
+                      p[1] = 1940
+                      p[0] = rng_p.uniform(0, 1080)
+                  sx, sy, sr_p = int(p[0] * 0.5), int(p[1] * 0.5), max(1, int(p[2] * 0.5))
+                  col = c_main if p[2] > 6.5 else c_sec
+                  dr.ellipse([sx - sr_p*2, sy - sr_p*2, sx + sr_p*2, sy + sr_p*2], fill=(col[0], col[1], col[2], int(p[5] * 0.28)))
+                  dr.ellipse([sx - sr_p, sy - sr_p, sx + sr_p, sy + sr_p], fill=(255, 250, 220, p[5]))
+
+              # Animated glowing retention progress bar at the bottom edge
+              prog_w = int(540 * min(1.0, f_idx / float(max(1, total_frames - 1))))
+              dr.rectangle([0, 952, 540, 960], fill=(255, 255, 255, 45))
+              dr.rectangle([0, 952, prog_w, 960], fill=(c_main[0], c_main[1], c_main[2], 240))
+              ov.save(f"overlay_frames/f_{f_idx:05d}.png", "PNG")
+
+          # 5. Synthesize Rhythmic Synth Beat + Transition Whoosh SFX
+          subprocess.run([
+              "ffmpeg", "-y",
+              "-f", "lavfi", "-i", f"sine=f=65.41:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"sine=f=98.00:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.04",
+              "-filter_complex",
+              "[0:a]tremolo=f=2.4:d=0.85,volume=0.09[bass];"
+              "[1:a]tremolo=f=4.8:d=0.70,volume=0.04[pulse];"
+              "[2:a]bandpass=f=900:width_type=h:w=600,tremolo=f=2.4:d=0.95,volume=0.18[hat];"
+              f"[bass][pulse][hat]amix=inputs=3:duration=shortest,afade=t=in:st=0:d=0.3,afade=t=out:st={max(total_dur-0.8,0.4)}:d=0.8[bg]",
+              "-map", "[bg]", "bgm.wav"
+          ], check=True)
+
+          # 6. Assemble Whip-Zoom Cuts + xfade Transitions + Particle Overlay + Kinetic Captions
+          trans_dur = 0.35
           seg_dur = (total_dur + trans_dur * (num_scenes - 1)) / float(num_scenes)
-          frames = int(math.ceil(seg_dur * 30)) + 4
+          seg_frames = int(math.ceil(seg_dur * fps)) + 4
 
           inputs = []
           filter_parts = []
-          transitions = ["zoomin", "fadeblack", "radial", "smoothleft", "circleopen", "dissolve"]
+          transitions = ["zoomin", "smoothleft", "radial", "wipeup", "circleopen", "fadeblack"]
 
           for i in range(num_scenes):
-              inputs.extend(["-loop", "1", "-t", f"{seg_dur + 0.5:.3f}", "-i", f"scene_{i}.jpg"])
+              inputs.extend(["-loop", "1", "-t", f"{seg_dur + 0.4:.3f}", "-i", f"scene_{i}.jpg"])
+              # Fast whip-zoom ease-out on every cut so motion is immediately obvious
               if i % 2 == 0:
-                  zp = f"zoompan=z='min(zoom+0.0018,1.16)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps=30"
+                  zp = f"zoompan=z='max(1.30 - 0.24*pow(on/{seg_frames},0.65), 1.04)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={seg_frames}:s=1080x1920:fps={fps}"
               else:
-                  zp = f"zoompan=z='max(1.16-0.0016*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps=30"
-              filter_parts.append(f"[{i}:v]scale=1280:2275,{zp},trim=duration={seg_dur:.4f},setpts=PTS-STARTPTS,format=yuva420p[v{i}];")
+                  zp = f"zoompan=z='min(1.04 + 0.24*pow(on/{seg_frames},0.75), 1.28)':x='iw/2-(iw/zoom/2)+sin(on*0.08)*18':y='ih/2-(ih/zoom/2)':d={seg_frames}:s=1080x1920:fps={fps}"
+              filter_parts.append(f"[{i}:v]scale=1350:2400,{zp},trim=duration={seg_dur:.4f},setpts=PTS-STARTPTS,format=yuva420p[v{i}];")
 
           prev_label = "v0"
           for i in range(1, num_scenes):
@@ -217,14 +310,20 @@ jobs:
               )
               prev_label = out_label
 
-          audio_idx_voice = num_scenes
-          audio_idx_bgm = num_scenes + 1
-          inputs.extend(["-i", "voice.mp3", "-i", "bgm.wav"])
+          ov_idx = num_scenes
+          voice_idx = num_scenes + 1
+          bgm_idx = num_scenes + 2
+          inputs.extend([
+              "-framerate", str(fps), "-i", "overlay_frames/f_%05d.png",
+              "-i", "voice.wav",
+              "-i", "bgm.wav"
+          ])
 
           filter_parts.append(
-              f"[{prev_label}]vignette=PI/5,ass=captions.ass,format=yuv420p[outv];"
-              f"[{audio_idx_voice}:a]volume=1.35[va];"
-              f"[{audio_idx_bgm}:a]volume=0.90[ba];"
+              f"[{ov_idx}:v]scale=1080:1920:flags=bilinear[ov_up];"
+              f"[{prev_label}][ov_up]overlay=0:0:shortest=1,vignette=PI/5,ass=captions.ass,format=yuv420p[outv];"
+              f"[{voice_idx}:a]volume=1.40[va];"
+              f"[{bgm_idx}:a]volume=0.95[ba];"
               f"[va][ba]amix=inputs=2:duration=first:dropout_transition=1[outa]"
           )
 
@@ -233,7 +332,7 @@ jobs:
               *inputs,
               "-filter_complex", "".join(filter_parts),
               "-map", "[outv]", "-map", "[outa]",
-              "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+              "-c:v", "libx264", "-preset", "fast", "-crf", "19",
               "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
               f"{topic_id}.mp4"
           ], check=True)
