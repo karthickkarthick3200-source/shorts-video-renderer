@@ -1,0 +1,39 @@
+name: Render Short Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic_id:
+        description: 'Topic ID (e.g. T1)'
+        required: true
+      topic_title:
+        description: 'Topic Title'
+        required: true
+      script:
+        description: 'Voiceover Script'
+        required: true
+
+jobs:
+  build-video:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install FFmpeg & Edge-TTS
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install edge-tts
+
+      - name: Generate Voiceover & 1080x1920 Image
+        run: |
+          edge-tts --voice "en-US-AndrewMultilingualNeural" --text "${{ github.event.inputs.script }}" --write-media voice.mp3
+          ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "${{ github.event.inputs.topic_title }}")
+          curl -L "https://image.pollinations.ai/prompt/${ENCODED_TITLE}%20vertical%209:16%20cinematic%20aesthetic?width=1080&height=1920&nologo=true" -o bg.jpg
+
+      - name: Render Vertical MP4 with FFmpeg
+        run: |
+          ffmpeg -loop 1 -i bg.jpg -i voice.mp3 -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0005,1.15)':d=1:s=1080x1920" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${{ github.event.inputs.topic_id }}.mp4"
+
+      - name: Save MP4 Output
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.topic_id }}-video
+          path: ${{ github.event.inputs.topic_id }}.mp4
