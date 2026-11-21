@@ -19,10 +19,10 @@ jobs:
     steps:
       - name: Install Tools
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra fonts-montserrat
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-montserrat fonts-dejavu-core
           pip install --upgrade edge-tts gTTS pillow
 
-      - name: Generate Tamil Voiceover, 3D Cinematic Scenes & Pro Transitions
+      - name: Generate Content-Matched Voice, Cinematic Scenes & Transitions
         env:
           SCRIPT_TEXT: ${{ github.event.inputs.script }}
           TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
@@ -32,25 +32,41 @@ jobs:
           import asyncio, math, os, re, subprocess, urllib.parse, urllib.request
           import edge_tts
           from gtts import gTTS
-          from PIL import Image, ImageDraw, ImageEnhance
+          from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
-          title = os.environ.get("TOPIC_TITLE", "").strip() or "Futuristic AI Revolution"
+          title = os.environ.get("TOPIC_TITLE", "").strip() or "Nano Banana AI"
           raw_script = os.environ.get("SCRIPT_TEXT", "").strip()
-          script = raw_script if len(raw_script) > 3 else "இது வெறும் ஆரம்பம் மட்டுமே! எதிர்கால தொழில்நுட்ப உலகத்திற்கு உங்களை வரவேற்கிறோம்."
+          script = raw_script if len(raw_script) > 3 else f"{title}. Where imagination comes to life."
           topic_id = os.environ.get("TOPIC_ID", "").strip() or "T_TEST"
 
-          # Detect if script contains Tamil Unicode characters
-          has_tamil = any('\u0B80' <= ch <= '\u0BFF' for ch in script)
+          # 1. Smart Content-Matched Voice Selection
+          combined_lower = (title + " " + script).lower()
+          if any(k in combined_lower for k in ["baby", "cute", "monkey", "animal", "funny", "kid", "mom", "dad", "love"]):
+              voice_candidates = [("en-US-EmmaMultilingualNeural", "+4%", "+1Hz"), ("en-US-JennyNeural", "+4%", "+1Hz")]
+              visual_style = (
+                  "3D Pixar Disney animation style, ultra expressive cute character, warm golden sunlight, "
+                  "soft cinematic bokeh, rich textures, 8k octane render, vertical 9:16 movie frame, no text"
+              )
+          elif any(k in combined_lower for k in ["india", "rupee", "₹", "student", "exam", "hack", "trick"]):
+              voice_candidates = [("en-IN-PrabhatNeural", "+6%", "-1Hz"), ("en-US-AndrewMultilingualNeural", "+6%", "-2Hz")]
+              visual_style = (
+                  "3D stylized Pixar cinematic animation, dramatic rim lighting, vibrant neon and gold highlights, "
+                  "shallow depth of field, 8k unreal engine 5 render, vertical 9:16, no text"
+              )
+          else:
+              # Deep cinematic movie-trailer voice for AI, Tech, Future, Motivation
+              voice_candidates = [("en-US-BrianMultilingualNeural", "+2%", "-4Hz"), ("en-US-DavisNeural", "+2%", "-4Hz"), ("en-US-ChristopherNeural", "+2%", "-3Hz")]
+              visual_style = (
+                  "hyper-detailed 3D futuristic sci-fi cinematic render, glowing golden circuit energy, "
+                  "volumetric god rays, dark obsidian and gold aesthetic, IMAX movie lighting, 8k octane render, vertical 9:16, no text"
+              )
 
-          # 1. Generate studio-grade Tamil (or English) neural voiceover
           word_events = []
           audio_ok = False
 
-          voices = ["ta-IN-ValluvarNeural", "ta-IN-PallaviNeural"] if has_tamil else ["en-US-ChristopherNeural", "en-US-AndrewNeural"]
-
-          async def try_edge(voice_name):
+          async def try_edge(voice_name, rate_val, pitch_val):
               word_events.clear()
-              comm = edge_tts.Communicate(script, voice_name, rate="+6%", pitch="-3Hz", boundary="WordBoundary")
+              comm = edge_tts.Communicate(script, voice_name, rate=rate_val, pitch=pitch_val, boundary="WordBoundary")
               with open("voice_raw.mp3", "wb") as af:
                   async for chunk in comm.stream():
                       if chunk["type"] == "audio":
@@ -60,44 +76,44 @@ jobs:
                           dur_s = chunk["duration"] / 10_000_000.0
                           word_events.append((start_s, start_s + dur_s, chunk["text"]))
 
-          for v in voices:
+          for v_name, v_rate, v_pitch in voice_candidates:
               try:
-                  asyncio.run(try_edge(v))
+                  asyncio.run(try_edge(v_name, v_rate, v_pitch))
                   if os.path.exists("voice_raw.mp3") and os.path.getsize("voice_raw.mp3") > 1000:
                       audio_ok = True
-                      print("Voice used:", v)
+                      print("Selected matched voice:", v_name)
                       break
-              except Exception as e:
-                  print("Voice fallback:", v, e)
+              except Exception:
+                  pass
 
           if not audio_ok:
-              gTTS(text=script, lang="ta" if has_tamil else "en", slow=False).save("voice_raw.mp3")
+              gTTS(text=script, lang="en", slow=False).save("voice_raw.mp3")
 
-          # Studio voice EQ: boost deep chest warmth (140Hz) + vocal clarity (3.5kHz) + loudness normalization
+          # Studio broadcast voice polish (warm bass boost + crisp presence + compression)
           subprocess.run([
               "ffmpeg", "-y", "-i", "voice_raw.mp3",
-              "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,equalizer=f=140:t=q:w=1.2:g=4,equalizer=f=3500:t=q:w=1.5:g=3,loudnorm",
+              "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,equalizer=f=120:t=q:w=1:g=3,equalizer=f=4500:t=q:w=1.5:g=2.5,acompressor=threshold=-18dB:ratio=3:attack=10:release=120,loudnorm",
               "voice.mp3"
           ], check=True)
 
           cmd_dur = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"]
-          total_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 4.5)
+          voice_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 4.0)
+          total_dur = voice_dur + 1.2  # Leave 1.2s at the end for golden title outro hold
 
-          # Cinematic trailer sub-bass + atmospheric harmonic pad
+          # Synthesize warm cinematic trailer chord + deep sub-bass swell
           subprocess.run([
               "ffmpeg", "-y",
-              "-f", "lavfi", "-i", f"sine=f=55:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"sine=f=110:d={total_dur}:r=44100",
-              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.015",
+              "-f", "lavfi", "-i", f"sine=f=65.41:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"sine=f=130.81:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"sine=f=196.00:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.012",
               "-filter_complex",
-              "[0:a]volume=0.09,tremolo=f=1.8:d=0.6[s1];"
-              "[1:a]volume=0.04,tremolo=f=3.6:d=0.5[s2];"
-              "[2:a]lowpass=f=280[n];"
-              "[s1][s2][n]amix=inputs=3:duration=shortest[bg]",
+              "[0:a]volume=0.07[s0];[1:a]volume=0.035[s1];[2:a]volume=0.025[s2];[3:a]lowpass=f=280[n];"
+              f"[s0][s1][s2][n]amix=inputs=4:duration=shortest,afade=t=in:st=0:d=0.6,afade=t=out:st={max(total_dur-1.0,0.5)}:d=1.0[bg]",
               "-map", "[bg]", "bgm.wav"
           ], check=True)
 
-          # 2. Build clean center-lower viral captions with Noto Sans Tamil / Montserrat
+          # 2. Clean Cinematic Glow Subtitles (Bottom-third, smooth fade, gold emphasis)
           def fmt_ass(sec):
               h = int(sec // 3600)
               m = int((sec % 3600) // 60)
@@ -105,18 +121,15 @@ jobs:
               cs = int((sec - int(sec)) * 100)
               return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-          font_name = "Noto Sans Tamil" if has_tamil else "Montserrat"
-          font_size = 64 if has_tamil else 82
-
-          ass_header = f"""[Script Info]
+          ass_header = """[Script Info]
           ScriptType: v4.00+
           PlayResX: 1080
           PlayResY: 1920
 
           [V4+ Styles]
           Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-          Style: MainPop,{font_name},{font_size},&H00FFFFFF,&H0000D7FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,6,3,2,70,70,340,1
-          Style: GoldPop,{font_name},{font_size + 4},&H0033D7FF,&H00FFFFFF,&H00000000,&HAA000000,-1,0,0,0,103,103,0,0,1,6,4,2,70,70,340,1
+          Style: CinemaSub,Montserrat,62,&H00FFFFFF,&H0000D7FF,&H000A0A0A,&H80000000,-1,0,0,0,100,100,2,0,1,3,4,2,80,80,260,1
+          Style: GoldTitle,Montserrat,96,&H0037AFD4,&H00FFFFFF,&H00080808,&H99000000,-1,0,0,0,100,100,4,0,1,5,6,5,60,60,0,1
 
           [Events]
           Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -125,17 +138,120 @@ jobs:
           events = []
           if word_events:
               idx = 0
-              c_idx = 0
               while idx < len(word_events):
-                  grp = word_events[idx:idx+3]
+                  grp = word_events[idx:idx+4]
                   t0 = grp[0][0]
-                  t1 = word_events[idx+3][0] if (idx + 3) < len(word_events) else max(grp[-1][1] + 0.15, total_dur)
+                  t1 = word_events[idx+4][0] if (idx + 4) < len(word_events) else voice_dur
                   txt = " ".join(w[2] for w in grp).strip()
-                  st = "GoldPop" if c_idx % 3 == 2 else "MainPop"
-                  anim = r"{\fscx88\fscy88\t(0,85,\fscx102\fscy102)\t(85,150,\fscx100\fscy100)}"
-                  events.append(f"Dialogue: 0,{fmt_ass(t0)},{fmt_ass(t1)},{st},,0,0,0,,{anim}{txt}")
-                  idx += 3
-                  c_idx += 1
+                  events.append(f"Dialogue: 0,{fmt_ass(t0)},{fmt_ass(t1)},CinemaSub,,0,0,0,,{{\\fad(80,80)}}{txt}")
+                  idx += 4
           else:
               words = script.split()
-              chunks = [" ".join(words[i:i+3
+              chunks = [" ".join(words[i:i+4]) for i in range(0, len(words), 4)] or [title]
+              step = voice_dur / len(chunks)
+              for i, txt in enumerate(chunks):
+                  events.append(f"Dialogue: 0,{fmt_ass(i*step)},{fmt_ass((i+1)*step)},CinemaSub,,0,0,0,,{{\\fad(80,80)}}{txt}")
+
+          # Dramatic 3D-style Golden Brand/Topic Title Reveal at the end (like reference outro)
+          clean_outro_title = re.sub(r"[^A-Za-z0-9 !&\-]", "", title.upper())[:28]
+          events.append(
+              f"Dialogue: 1,{fmt_ass(max(voice_dur - 0.3, 0.5))},{fmt_ass(total_dur)},GoldTitle,,0,0,0,,"
+              f"{{\\fad(250,200)\\fscx90\\fscy90\\t(0,400,\\fscx105\\fscy105)}}{clean_outro_title}"
+          )
+
+          with open("captions.ass", "w", encoding="utf-8") as af:
+              af.write(ass_header + "\n".join(events))
+
+          # 3. Generate High-Detail Flux 3D Scenes
+          num_scenes = max(4, min(7, int(round(total_dur / 2.8))))
+          words = script.split()
+          chunk_len = max(1, len(words) // num_scenes)
+          scene_beats = [" ".join(words[i*chunk_len:(i+1)*chunk_len]) for i in range(num_scenes)]
+
+          for i, beat in enumerate(scene_beats):
+              prompt = f"{beat[:95]}, {title}, {visual_style}"
+              url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=1080&height=1920&model=flux&nologo=true&seed={200 + i*29}"
+              fname = f"scene_{i}.jpg"
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      open(fname, "wb").write(r.read())
+                  img = Image.open(fname).convert("RGB")
+                  w, h = img.size
+                  img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
+                  img = ImageEnhance.Contrast(img).enhance(1.16)
+                  img = ImageEnhance.Color(img).enhance(1.18)
+                  img = ImageEnhance.Sharpness(img).enhance(1.2)
+                  img.save(fname, "JPEG", quality=95)
+              except Exception:
+                  img = Image.new("RGB", (1080, 1920), (15, 12, 8))
+                  draw = ImageDraw.Draw(img)
+                  for y in range(1920):
+                      draw.line([(0, y), (1080, y)], fill=(int(25 + y/40), int(18 + y/55), 10))
+                  img.save(fname, "JPEG")
+
+          # 4. Assemble with Smooth xfade Cinematic Transitions + Dynamic Motion + Glow
+          trans_dur = 0.45
+          seg_dur = (total_dur + trans_dur * (num_scenes - 1)) / float(num_scenes)
+          frames = int(math.ceil(seg_dur * 30)) + 4
+
+          inputs = []
+          filter_parts = []
+          transitions = ["zoomin", "fadeblack", "radial", "smoothleft", "circleopen", "dissolve"]
+
+          for i in range(num_scenes):
+              inputs.extend(["-loop", "1", "-t", f"{seg_dur + 0.5:.3f}", "-i", f"scene_{i}.jpg"])
+              if i % 2 == 0:
+                  zp = f"zoompan=z='min(zoom+0.0018,1.16)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps=30"
+              else:
+                  zp = f"zoompan=z='max(1.16-0.0016*on,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps=30"
+              filter_parts.append(f"[{i}:v]scale=1280:2275,{zp},trim=duration={seg_dur:.4f},setpts=PTS-STARTPTS,format=yuva420p[v{i}];")
+
+          prev_label = "v0"
+          for i in range(1, num_scenes):
+              out_label = f"xf{i}"
+              offset = i * (seg_dur - trans_dur)
+              t_type = transitions[(i - 1) % len(transitions)]
+              filter_parts.append(
+                  f"[{prev_label}][v{i}]xfade=transition={t_type}:duration={trans_dur:.2f}:offset={offset:.3f}[{out_label}];"
+              )
+              prev_label = out_label
+
+          audio_idx_voice = num_scenes
+          audio_idx_bgm = num_scenes + 1
+          inputs.extend(["-i", "voice.mp3", "-i", "bgm.wav"])
+
+          filter_parts.append(
+              f"[{prev_label}]vignette=PI/5,ass=captions.ass,format=yuv420p[outv];"
+              f"[{audio_idx_voice}:a]volume=1.35[va];"
+              f"[{audio_idx_bgm}:a]volume=0.90[ba];"
+              f"[va][ba]amix=inputs=2:duration=first:dropout_transition=1[outa]"
+          )
+
+          subprocess.run([
+              "ffmpeg", "-y",
+              *inputs,
+              "-filter_complex", "".join(filter_parts),
+              "-map", "[outv]", "-map", "[outa]",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+              "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
+              f"{topic_id}.mp4"
+          ], check=True)
+          EOF
+          python3 make_video.py
+
+      - name: Upload Video to Google Drive & Update Sheet
+        env:
+          WEBHOOK_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          TOPIC_ID: ${{ github.event.inputs.topic_id }}
+        run: |
+          cat << 'EOF' > upload.py
+          import base64, json, os, urllib.request
+          with open(f"{os.environ['TOPIC_ID']}.mp4", "rb") as f:
+              b64 = base64.b64encode(f.read()).decode("utf-8")
+          body = json.dumps({"topic_id": os.environ["TOPIC_ID"], "video_base64": b64}).encode("utf-8")
+          req = urllib.request.Request(os.environ["WEBHOOK_URL"], data=body, headers={"Content-Type": "application/json"})
+          with urllib.request.urlopen(req, timeout=60) as resp:
+              print("Apps Script response:", resp.read().decode())
+          EOF
+          python3 upload.py
