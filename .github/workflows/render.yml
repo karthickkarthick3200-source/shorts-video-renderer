@@ -17,56 +17,110 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
     steps:
-      - name: Install FFmpeg, Edge-TTS & Pillow
+      - name: Install FFmpeg, Fonts, Edge-TTS & Pillow
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
           pip install edge-tts pillow
 
-      - name: Generate Voiceover & 1080x1920 Image
+      - name: Generate Voiceover, Timed Subtitles & 3 Dynamic Scenes
         env:
           SCRIPT_TEXT: ${{ github.event.inputs.script }}
           TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
         run: |
           python3 - << 'EOF'
-          import asyncio, os, urllib.parse, urllib.request
+          import asyncio, os, re, subprocess, urllib.parse, urllib.request
           import edge_tts
           from PIL import Image, ImageDraw
 
-          script = os.environ["SCRIPT_TEXT"]
-          title = os.environ["TOPIC_TITLE"]
+          script = os.environ["SCRIPT_TEXT"].strip()
+          title = os.environ["TOPIC_TITLE"].strip()
 
+          # 1. Generate voiceover MP3 + word-level timing metadata
           async def make_audio():
               communicate = edge_tts.Communicate(script, "en-US-AndrewMultilingualNeural")
-              await communicate.save("voice.mp3")
+              submaker = edge_tts.SubMaker()
+              with open("voice.mp3", "wb") as audio_file:
+                  async for chunk in communicate.stream():
+                      if chunk["type"] == "audio":
+                          audio_file.write(chunk["data"])
+                      elif chunk["type"] == "WordBoundary":
+                          submaker.feed(chunk)
+              with open("captions.srt", "w", encoding="utf-8") as srt_file:
+                  srt_file.write(submaker.get_srt())
 
           asyncio.run(make_audio())
 
-          encoded = urllib.parse.quote(f"{title} vertical 9:16 cinematic aesthetic")
-          url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true"
-          try:
-              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-              with urllib.request.urlopen(req, timeout=45) as resp:
-                  data = resp.read()
-              with open("bg.jpg", "wb") as f:
-                  f.write(data)
-              Image.open("bg.jpg").verify()
-          except Exception as e:
-              print("Using clean gradient fallback:", e)
-              img = Image.new("RGB", (1080, 1920), (18, 22, 38))
-              draw = ImageDraw.Draw(img)
-              for y in range(1920):
-                  r = int(18 + (y / 1920) * 35)
-                  g = int(22 + (y / 1920) * 55)
-                  b = int(38 + (y / 1920) * 95)
-                  draw.line([(0, y), (1080, y)], fill=(r, g, b))
-              img.save("bg.jpg", "JPEG")
-          EOF
+          # 2. Split script into 3 scene prompts for visual variety
+          sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
+          while len(sentences) < 3:
+              sentences.append(title)
+          scene_prompts = [
+              f"{title}, vibrant 3d digital illustration, dramatic lighting, vertical 9:16",
+              f"{sentences[0][:90]}, modern colorful concept art, ultra detailed, vertical 9:16",
+              f"{sentences[-1][:90]}, inspiring futuristic aesthetic, glowing colors, vertical 9:16"
+          ]
 
-      - name: Render Vertical MP4 with FFmpeg
+          for idx, prompt in enumerate(scene_prompts):
+              encoded = urllib.parse.quote(prompt)
+              url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&seed={idx+10}"
+              out_name = f"scene_{idx}.jpg"
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                  with urllib.request.urlopen(req, timeout=45) as resp:
+                      data = resp.read()
+                  with open(out_name, "wb") as f:
+                      f.write(data)
+                  img = Image.open(out_name).convert("RGB")
+                  # Crop bottom 6% to remove any watermark and resize cleanly to 1080x1920
+                  w, h = img.size
+                  img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
+                  img.save(out_name, "JPEG", quality=92)
+              except Exception as e:
+                  print(f"Fallback gradient for scene {idx}:", e)
+                  img = Image.new("RGB", (1080, 1920), (20, 25, 45))
+                  draw = ImageDraw.Draw(img)
+                  for y in range(1920):
+                      draw.line([(0, y), (1080, y)], fill=(20 + idx*15, int(25 + y/35), int(55 + y/20)))
+                  img.save(out_name, "JPEG")
+
+          # 3. Get exact audio duration and render 3 animated zoom scenes + burned-in subtitles + title bar
+          dur_out = subprocess.check_output([
+              "ffprobe", "-v", "error", "-show_entries", "format=duration",
+              "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"
+          ]).decode().strip()
+          total_dur = max(float(dur_out), 3.0)
+          seg_dur = total_dur / 3.0
+
+          safe_title = title.upper().replace("'", "").replace(":", " -")[:38]
+
+          filter_complex = (
+              f"[0:v]scale=1200:2133,zoompan=z='min(zoom+0.0008,1.12)':d={int(seg_dur*30)}:s=1080x1920:fps=30,trim=duration={seg_dur},setpts=PTS-STARTPTS[v0];"
+              f"[1:v]scale=1200:2133,zoompan=z='1.12-0.0008*on':d={int(seg_dur*30)}:s=1080x1920:fps=30,trim=duration={seg_dur},setpts=PTS-STARTPTS[v1];"
+              f"[2:v]scale=1200:2133,zoompan=z='min(zoom+0.0008,1.12)':d={int(seg_dur*30)}:s=1080x1920:fps=30,trim=duration={seg_dur},setpts=PTS-STARTPTS[v2];"
+              f"[v0][v1][v2]concat=n=3:v=1:a=0[bg];"
+              f"[bg]drawbox=x=0:y=0:w=1080:h=220:color=black@0.55:t=fill,"
+              f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='{safe_title}':fontcolor=yellow:fontsize=46:x=(w-text_w)/2:y=95,"
+              f"subtitles=captions.srt:force_style='FontName=DejaVu Sans,FontSize=18,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=260'[outv]"
+          )
+
+          subprocess.run([
+              "ffmpeg", "-y",
+              "-loop", "1", "-t", str(seg_dur + 1), "-i", "scene_0.jpg",
+              "-loop", "1", "-t", str(seg_dur + 1), "-i", "scene_1.jpg",
+              "-loop", "1", "-t", str(seg_dur + 1), "-i", "scene_2.jpg",
+              "-i", "voice.mp3",
+              "-filter_complex", filter_complex,
+              "-map", "[outv]", "-map", "3:a",
+              "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+              "-c:a", "aac", "-b:a", "192k",
+              "-pix_fmt", "yuv420p", "-shortest",
+              f"{os.environ['TOPIC_ID']}.mp4"
+          ], check=True)
+          EOF
         env:
+          SCRIPT_TEXT: ${{ github.event.inputs.script }}
+          TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
           TOPIC_ID: ${{ github.event.inputs.topic_id }}
-        run: |
-          ffmpeg -loop 1 -i bg.jpg -i voice.mp3 -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0005,1.15)':d=1:s=1080x1920" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${TOPIC_ID}.mp4"
 
       - name: Save MP4 Output
         uses: actions/upload-artifact@v4
