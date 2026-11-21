@@ -26,6 +26,7 @@ jobs:
         env:
           SCRIPT_TEXT: ${{ github.event.inputs.script }}
           TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
+          TOPIC_ID: ${{ github.event.inputs.topic_id }}
         run: |
           python3 - << 'EOF'
           import asyncio, os, re, subprocess, urllib.parse, urllib.request
@@ -71,7 +72,6 @@ jobs:
                   with open(out_name, "wb") as f:
                       f.write(data)
                   img = Image.open(out_name).convert("RGB")
-                  # Crop bottom 6% to remove any watermark and resize cleanly to 1080x1920
                   w, h = img.size
                   img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
                   img.save(out_name, "JPEG", quality=92)
@@ -110,20 +110,4 @@ jobs:
               "-loop", "1", "-t", str(seg_dur + 1), "-i", "scene_2.jpg",
               "-i", "voice.mp3",
               "-filter_complex", filter_complex,
-              "-map", "[outv]", "-map", "3:a",
-              "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-              "-c:a", "aac", "-b:a", "192k",
-              "-pix_fmt", "yuv420p", "-shortest",
-              f"{os.environ['TOPIC_ID']}.mp4"
-          ], check=True)
-          EOF
-        env:
-          SCRIPT_TEXT: ${{ github.event.inputs.script }}
-          TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
-          TOPIC_ID: ${{ github.event.inputs.topic_id }}
-
-      - name: Save MP4 Output
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.inputs.topic_id }}-video
-          path: ${{ github.event.inputs.topic_id }}.mp4
+              "-
