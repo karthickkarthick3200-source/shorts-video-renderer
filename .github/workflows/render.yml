@@ -19,34 +19,39 @@ jobs:
     steps:
       - name: Install Tools
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+          sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-core fonts-noto-extra fonts-montserrat
           pip install --upgrade edge-tts gTTS pillow
 
-      - name: Generate Voiceover, Subtitles & 3 Scenes
+      - name: Generate Tamil Voiceover, 3D Cinematic Scenes & Pro Transitions
         env:
           SCRIPT_TEXT: ${{ github.event.inputs.script }}
           TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
           TOPIC_ID: ${{ github.event.inputs.topic_id }}
         run: |
           cat << 'EOF' > make_video.py
-          import asyncio, os, re, subprocess, urllib.parse, urllib.request
+          import asyncio, math, os, re, subprocess, urllib.parse, urllib.request
           import edge_tts
           from gtts import gTTS
-          from PIL import Image, ImageDraw
+          from PIL import Image, ImageDraw, ImageEnhance
 
-          title = os.environ.get("TOPIC_TITLE", "").strip() or "Daily Quick Tip"
+          title = os.environ.get("TOPIC_TITLE", "").strip() or "Futuristic AI Revolution"
           raw_script = os.environ.get("SCRIPT_TEXT", "").strip()
-          script = raw_script if len(raw_script) > 3 else f"{title}. Here is something amazing you need to know today!"
+          script = raw_script if len(raw_script) > 3 else "இது வெறும் ஆரம்பம் மட்டுமே! எதிர்கால தொழில்நுட்ப உலகத்திற்கு உங்களை வரவேற்கிறோம்."
           topic_id = os.environ.get("TOPIC_ID", "").strip() or "T_TEST"
 
-          # 1. Generate voiceover MP3 (tries multiple Edge voices, then falls back to gTTS)
+          # Detect if script contains Tamil Unicode characters
+          has_tamil = any('\u0B80' <= ch <= '\u0BFF' for ch in script)
+
+          # 1. Generate studio-grade Tamil (or English) neural voiceover
           word_events = []
           audio_ok = False
 
+          voices = ["ta-IN-ValluvarNeural", "ta-IN-PallaviNeural"] if has_tamil else ["en-US-ChristopherNeural", "en-US-AndrewNeural"]
+
           async def try_edge(voice_name):
               word_events.clear()
-              comm = edge_tts.Communicate(script, voice_name, boundary="WordBoundary")
-              with open("voice.mp3", "wb") as af:
+              comm = edge_tts.Communicate(script, voice_name, rate="+6%", pitch="-3Hz", boundary="WordBoundary")
+              with open("voice_raw.mp3", "wb") as af:
                   async for chunk in comm.stream():
                       if chunk["type"] == "audio":
                           af.write(chunk["data"])
@@ -55,123 +60,82 @@ jobs:
                           dur_s = chunk["duration"] / 10_000_000.0
                           word_events.append((start_s, start_s + dur_s, chunk["text"]))
 
-          for v in ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-JennyNeural"]:
+          for v in voices:
               try:
                   asyncio.run(try_edge(v))
-                  if os.path.exists("voice.mp3") and os.path.getsize("voice.mp3") > 1000:
+                  if os.path.exists("voice_raw.mp3") and os.path.getsize("voice_raw.mp3") > 1000:
                       audio_ok = True
-                      print("Audio generated with Edge voice:", v)
+                      print("Voice used:", v)
                       break
               except Exception as e:
-                  print(f"Edge voice {v} skipped:", e)
+                  print("Voice fallback:", v, e)
 
           if not audio_ok:
-              print("Falling back to gTTS...")
-              tts = gTTS(text=script, lang="en", slow=False)
-              tts.save("voice.mp3")
+              gTTS(text=script, lang="ta" if has_tamil else "en", slow=False).save("voice_raw.mp3")
+
+          # Studio voice EQ: boost deep chest warmth (140Hz) + vocal clarity (3.5kHz) + loudness normalization
+          subprocess.run([
+              "ffmpeg", "-y", "-i", "voice_raw.mp3",
+              "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-45dB,equalizer=f=140:t=q:w=1.2:g=4,equalizer=f=3500:t=q:w=1.5:g=3,loudnorm",
+              "voice.mp3"
+          ], check=True)
 
           cmd_dur = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "voice.mp3"]
-          total_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 3.0)
+          total_dur = max(float(subprocess.check_output(cmd_dur).decode().strip()), 4.5)
 
-          def fmt_srt(sec):
+          # Cinematic trailer sub-bass + atmospheric harmonic pad
+          subprocess.run([
+              "ffmpeg", "-y",
+              "-f", "lavfi", "-i", f"sine=f=55:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"sine=f=110:d={total_dur}:r=44100",
+              "-f", "lavfi", "-i", f"anoisesrc=d={total_dur}:c=pink:r=44100:a=0.015",
+              "-filter_complex",
+              "[0:a]volume=0.09,tremolo=f=1.8:d=0.6[s1];"
+              "[1:a]volume=0.04,tremolo=f=3.6:d=0.5[s2];"
+              "[2:a]lowpass=f=280[n];"
+              "[s1][s2][n]amix=inputs=3:duration=shortest[bg]",
+              "-map", "[bg]", "bgm.wav"
+          ], check=True)
+
+          # 2. Build clean center-lower viral captions with Noto Sans Tamil / Montserrat
+          def fmt_ass(sec):
               h = int(sec // 3600)
               m = int((sec % 3600) // 60)
               s = int(sec % 60)
-              ms = int((sec - int(sec)) * 1000)
-              return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+              cs = int((sec - int(sec)) * 100)
+              return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-          srt_blocks = []
+          font_name = "Noto Sans Tamil" if has_tamil else "Montserrat"
+          font_size = 64 if has_tamil else 82
+
+          ass_header = f"""[Script Info]
+          ScriptType: v4.00+
+          PlayResX: 1080
+          PlayResY: 1920
+
+          [V4+ Styles]
+          Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+          Style: MainPop,{font_name},{font_size},&H00FFFFFF,&H0000D7FF,&H00000000,&HAA000000,-1,0,0,0,100,100,0,0,1,6,3,2,70,70,340,1
+          Style: GoldPop,{font_name},{font_size + 4},&H0033D7FF,&H00FFFFFF,&H00000000,&HAA000000,-1,0,0,0,103,103,0,0,1,6,4,2,70,70,340,1
+
+          [Events]
+          Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+          """
+
+          events = []
           if word_events:
-              for idx in range(0, len(word_events), 3):
+              idx = 0
+              c_idx = 0
+              while idx < len(word_events):
                   grp = word_events[idx:idx+3]
                   t0 = grp[0][0]
-                  t1 = max(grp[-1][1], t0 + 0.25)
-                  txt = " ".join(w[2] for w in grp)
-                  srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(t0)} --> {fmt_srt(t1)}\n{txt}\n")
+                  t1 = word_events[idx+3][0] if (idx + 3) < len(word_events) else max(grp[-1][1] + 0.15, total_dur)
+                  txt = " ".join(w[2] for w in grp).strip()
+                  st = "GoldPop" if c_idx % 3 == 2 else "MainPop"
+                  anim = r"{\fscx88\fscy88\t(0,85,\fscx102\fscy102)\t(85,150,\fscx100\fscy100)}"
+                  events.append(f"Dialogue: 0,{fmt_ass(t0)},{fmt_ass(t1)},{st},,0,0,0,,{anim}{txt}")
+                  idx += 3
+                  c_idx += 1
           else:
               words = script.split()
-              chunks = [" ".join(words[i:i+3]) for i in range(0, len(words), 3)] or [title]
-              step = total_dur / len(chunks)
-              for idx, txt in enumerate(chunks):
-                  srt_blocks.append(f"{idx+1}\n{fmt_srt(idx*step)} --> {fmt_srt((idx+1)*step)}\n{txt}\n")
-
-          with open("captions.srt", "w", encoding="utf-8") as sf:
-              sf.write("\n".join(srt_blocks))
-
-          # 2. Generate 3 dynamic vertical background images
-          parts = [s.strip() for s in re.split(r'(?<=[.!?])\s+', script) if s.strip()]
-          while len(parts) < 3:
-              parts.append(title)
-
-          prompts = [
-              f"{title}, vibrant 3d digital illustration, vertical 9:16",
-              f"{parts[0][:80]}, colorful modern concept art, vertical 9:16",
-              f"{parts[-1][:80]}, inspiring glowing aesthetic, vertical 9:16"
-          ]
-
-          for i, p in enumerate(prompts):
-              url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(p)}?width=1080&height=1920&nologo=true&seed={i+10}"
-              fname = f"scene_{i}.jpg"
-              try:
-                  req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                  with urllib.request.urlopen(req, timeout=45) as r:
-                      open(fname, "wb").write(r.read())
-                  img = Image.open(fname).convert("RGB")
-                  w, h = img.size
-                  img = img.crop((0, 0, w, int(h * 0.94))).resize((1080, 1920), Image.LANCZOS)
-                  img.save(fname, "JPEG", quality=92)
-              except Exception:
-                  img = Image.new("RGB", (1080, 1920), (20, 25, 45))
-                  draw = ImageDraw.Draw(img)
-                  for y in range(1920):
-                      draw.line([(0, y), (1080, y)], fill=(20 + i*15, int(25 + y/35), int(55 + y/20)))
-                  img.save(fname, "JPEG")
-
-          # 3. Render 3 animated zoom scenes + top title banner + burned-in subtitles
-          seg = total_dur / 3.0
-          frames = int(seg * 30)
-
-          safe_title = re.sub(r"[^A-Za-z0-9 \-]", "", title.upper())[:36]
-          font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-          sub_style = "FontName=DejaVu Sans,FontSize=20,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=260"
-
-          fc = (
-              f"[0:v]scale=1200:2133,zoompan=z='min(zoom+0.0008,1.12)':d={frames}:s=1080x1920:fps=30,trim=duration={seg},setpts=PTS-STARTPTS[v0];"
-              f"[1:v]scale=1200:2133,zoompan=z='1.12-0.0008*on':d={frames}:s=1080x1920:fps=30,trim=duration={seg},setpts=PTS-STARTPTS[v1];"
-              f"[2:v]scale=1200:2133,zoompan=z='min(zoom+0.0008,1.12)':d={frames}:s=1080x1920:fps=30,trim=duration={seg},setpts=PTS-STARTPTS[v2];"
-              f"[v0][v1][v2]concat=n=3:v=1:a=0[bg];"
-              f"[bg]drawbox=x=0:y=0:w=1080:h=220:color=black@0.55:t=fill,"
-              f"drawtext=fontfile={font_path}:text='{safe_title}':fontcolor=yellow:fontsize=46:x=(w-text_w)/2:y=95,"
-              f"subtitles=captions.srt:force_style='{sub_style}'[outv]"
-          )
-
-          subprocess.run([
-              "ffmpeg", "-y",
-              "-loop", "1", "-t", str(seg + 1), "-i", "scene_0.jpg",
-              "-loop", "1", "-t", str(seg + 1), "-i", "scene_1.jpg",
-              "-loop", "1", "-t", str(seg + 1), "-i", "scene_2.jpg",
-              "-i", "voice.mp3",
-              "-filter_complex", fc,
-              "-map", "[outv]", "-map", "3:a",
-              "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-              "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
-              f"{topic_id}.mp4"
-          ], check=True)
-          EOF
-          python3 make_video.py
-
-      - name: Upload Video to Google Drive & Update Sheet
-        env:
-          WEBHOOK_URL: ${{ secrets.APPS_SCRIPT_URL }}
-          TOPIC_ID: ${{ github.event.inputs.topic_id }}
-        run: |
-          cat << 'EOF' > upload.py
-          import base64, json, os, urllib.request
-          with open(f"{os.environ['TOPIC_ID']}.mp4", "rb") as f:
-              b64 = base64.b64encode(f.read()).decode("utf-8")
-          body = json.dumps({"topic_id": os.environ["TOPIC_ID"], "video_base64": b64}).encode("utf-8")
-          req = urllib.request.Request(os.environ["WEBHOOK_URL"], data=body, headers={"Content-Type": "application/json"})
-          with urllib.request.urlopen(req, timeout=60) as resp:
-              print("Apps Script response:", resp.read().decode())
-          EOF
-          python3 upload.py
+              chunks = [" ".join(words[i:i+3
