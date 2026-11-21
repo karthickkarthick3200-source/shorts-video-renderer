@@ -74,14 +74,24 @@ jobs:
           TOPIC_ID: ${{ github.event.inputs.topic_id }}
         run: |
           python3 - << 'EOF'
-          import base64, json, os, urllib.request
+          import base64, json, os, subprocess, sys
 
           topic_id = os.environ["TOPIC_ID"]
           with open(f"{topic_id}.mp4", "rb") as f:
               b64 = base64.b64encode(f.read()).decode("utf-8")
 
-          payload = json.dumps({"topic_id": topic_id, "video_base64": b64}).encode("utf-8")
-          req = urllib.request.Request(os.environ["APPS_SCRIPT_URL"], data=payload, headers={"Content-Type": "application/json"})
-          with urllib.request.urlopen(req) as resp:
-              print(resp.read().decode("utf-8"))
+          with open("payload.json", "w") as out:
+              json.dump({"topic_id": topic_id, "video_base64": b64}, out)
+
+          raw = subprocess.check_output([
+              "curl", "-sL", "-X", "POST",
+              "-H", "Content-Type: application/json",
+              "-d", "@payload.json",
+              os.environ["APPS_SCRIPT_URL"]
+          ]).decode("utf-8")
+
+          print("Apps Script response:", raw)
+          result = json.loads(raw)
+          if result.get("status") != "ok":
+              sys.exit(f"Sheet update failed: {result}")
           EOF
