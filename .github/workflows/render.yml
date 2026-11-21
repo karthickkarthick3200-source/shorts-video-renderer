@@ -17,20 +17,56 @@ jobs:
   build-video:
     runs-on: ubuntu-latest
     steps:
-      - name: Install FFmpeg & Edge-TTS
+      - name: Install FFmpeg, Edge-TTS & Pillow
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          pip install edge-tts
+          pip install edge-tts pillow
 
       - name: Generate Voiceover & 1080x1920 Image
+        env:
+          SCRIPT_TEXT: ${{ github.event.inputs.script }}
+          TOPIC_TITLE: ${{ github.event.inputs.topic_title }}
         run: |
-          edge-tts --voice "en-US-AndrewMultilingualNeural" --text "${{ github.event.inputs.script }}" --write-media voice.mp3
-          ENCODED_TITLE=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "${{ github.event.inputs.topic_title }}")
-          curl -L "https://image.pollinations.ai/prompt/${ENCODED_TITLE}%20vertical%209:16%20cinematic%20aesthetic?width=1080&height=1920&nologo=true" -o bg.jpg
+          python3 - << 'EOF'
+          import asyncio, os, urllib.parse, urllib.request
+          import edge_tts
+          from PIL import Image, ImageDraw
+
+          script = os.environ["SCRIPT_TEXT"]
+          title = os.environ["TOPIC_TITLE"]
+
+          async def make_audio():
+              communicate = edge_tts.Communicate(script, "en-US-AndrewMultilingualNeural")
+              await communicate.save("voice.mp3")
+
+          asyncio.run(make_audio())
+
+          encoded = urllib.parse.quote(f"{title} vertical 9:16 cinematic aesthetic")
+          url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true"
+          try:
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+              with urllib.request.urlopen(req, timeout=45) as resp:
+                  data = resp.read()
+              with open("bg.jpg", "wb") as f:
+                  f.write(data)
+              Image.open("bg.jpg").verify()
+          except Exception as e:
+              print("Using clean gradient fallback:", e)
+              img = Image.new("RGB", (1080, 1920), (18, 22, 38))
+              draw = ImageDraw.Draw(img)
+              for y in range(1920):
+                  r = int(18 + (y / 1920) * 35)
+                  g = int(22 + (y / 1920) * 55)
+                  b = int(38 + (y / 1920) * 95)
+                  draw.line([(0, y), (1080, y)], fill=(r, g, b))
+              img.save("bg.jpg", "JPEG")
+          EOF
 
       - name: Render Vertical MP4 with FFmpeg
+        env:
+          TOPIC_ID: ${{ github.event.inputs.topic_id }}
         run: |
-          ffmpeg -loop 1 -i bg.jpg -i voice.mp3 -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0005,1.15)':d=1:s=1080x1920" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${{ github.event.inputs.topic_id }}.mp4"
+          ffmpeg -loop 1 -i bg.jpg -i voice.mp3 -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0005,1.15)':d=1:s=1080x1920" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${TOPIC_ID}.mp4"
 
       - name: Upload MP4 to Google Drive & Update Sheet
         env:
